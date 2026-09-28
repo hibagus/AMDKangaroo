@@ -97,11 +97,12 @@ void InitGpus()
 
 		hipDeviceProp_t deviceProp;
 		hipGetDeviceProperties(&deviceProp, i);
-		// For AMD RDNA 3: multiProcessorCount reports WGPs (Workgroup Processors)
-		// 1 WGP = 2 CUs, so multiply by 2 for actual CU count
+		// For AMD: multiProcessorCount varies by architecture
+		// RDNA 3: WGPs (1 WGP = 2 CUs)
+		// CDNA 3/4: Direct CU count or XCD-based reporting
 		int actualCUs = deviceProp.multiProcessorCount * 2;
-		printf("GPU %d: %s, %.2f GB, %d CUs, cap %d.%d, PCI %d, L2 size: %d KB\r\n", i, deviceProp.name, ((float)(deviceProp.totalGlobalMem / (1024 * 1024))) / 1024.0f, actualCUs, deviceProp.major, deviceProp.minor, deviceProp.pciBusID, deviceProp.l2CacheSize / 1024);
-		
+		printf("GPU %d: %s, %.2f GB, ~%d CUs, cap %d.%d, PCI %d, L2 size: %d KB\r\n", i, deviceProp.name, ((float)(deviceProp.totalGlobalMem / (1024 * 1024))) / 1024.0f, actualCUs, deviceProp.major, deviceProp.minor, deviceProp.pciBusID, deviceProp.l2CacheSize / 1024);
+
 		if (deviceProp.major < 6)
 		{
 			printf("GPU %d - not supported, skip\r\n", i);
@@ -114,11 +115,35 @@ void InitGpus()
 		GpuKangs[GpuCnt]->CudaIndex = i;
 		GpuKangs[GpuCnt]->persistingL2CacheMaxSize = deviceProp.persistingL2CacheMaxSize;
 		GpuKangs[GpuCnt]->mpCnt = deviceProp.multiProcessorCount;
-		// AMD RDNA 3 (gfx11xx) is modern architecture, not old GPU
-		// For NVIDIA: old GPU if L2 < 16MB (pre-RTX 40xx)
-		// For AMD: check compute capability (11.x = RDNA 3 = modern)
+
+		// Architecture detection for optimal kernel parameters:
+		// RDNA 3 (gfx1100): cap 11.0, ~6MB L2, Wave32
+		// CDNA 3 (gfx942):  cap 9.0,  256MB L2, Wave64, ~192 CUs
+		// CDNA 4 (gfx950):  cap 9.2,  256MB L2, Wave64, ~256+ CUs
+
+		GpuKangs[GpuCnt]->IsCDNA3 = false;
+		GpuKangs[GpuCnt]->IsCDNA4 = false;
+
+		// CDNA detection: >= 256MB L2 cache is strong indicator of CDNA 3/4
+		if (deviceProp.l2CacheSize >= 256 * 1024 * 1024) {
+			// CDNA 4: Higher compute capability than CDNA 3
+			if (deviceProp.major == 9 && deviceProp.minor >= 2) {
+				GpuKangs[GpuCnt]->IsCDNA4 = true;
+				printf("  -> Detected as CDNA 4 (Mi355X, gfx950)\r\n");
+			} else if (deviceProp.major == 9) {
+				GpuKangs[GpuCnt]->IsCDNA3 = true;
+				printf("  -> Detected as CDNA 3 (Mi300X, gfx942)\r\n");
+			} else {
+				GpuKangs[GpuCnt]->IsCDNA3 = true;  // Conservative guess
+				printf("  -> Detected as CDNA (assuming CDNA 3 architecture)\r\n");
+			}
+		}
+
+		// RDNA 3 is modern architecture (gfx1100)
 		bool isAmdRdna3 = (deviceProp.major == 11);
+		// IsOldGpu = true only for genuinely old/legacy GPUs
 		GpuKangs[GpuCnt]->IsOldGpu = isAmdRdna3 ? false : (deviceProp.l2CacheSize < 16 * 1024 * 1024);
+
 		GpuCnt++;
 	}
 	printf("Total GPUs for work: %d\r\n", GpuCnt);

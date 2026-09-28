@@ -63,6 +63,8 @@ public:
 	int KangCnt;
 	bool Failed;
 	bool IsOldGpu;
+	bool IsCDNA3;  // Mi300X (gfx942) with Wave64
+	bool IsCDNA4;  // Mi355X (gfx950) with Wave64
 
 	int CalcKangCnt();
 	bool Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJumps1, EcJMP* _EcJumps2, EcJMP* _EcJumps3);
