@@ -120,23 +120,27 @@ void InitGpus()
 		// RDNA 3 (gfx1100): cap 11.0, ~6MB L2, Wave32
 		// CDNA 3 (gfx942):  cap 9.0,  256MB L2, Wave64, ~192 CUs
 		// CDNA 4 (gfx950):  cap 9.2,  256MB L2, Wave64, ~256+ CUs
+		// Note: L2CacheSize field may be unreliable, use device name instead
 
 		GpuKangs[GpuCnt]->IsCDNA3 = false;
 		GpuKangs[GpuCnt]->IsCDNA4 = false;
 
-		// CDNA detection: >= 256MB L2 cache is strong indicator of CDNA 3/4
-		if (deviceProp.l2CacheSize >= 256 * 1024 * 1024) {
-			// CDNA 4: Higher compute capability than CDNA 3
-			if (deviceProp.major == 9 && deviceProp.minor >= 2) {
-				GpuKangs[GpuCnt]->IsCDNA4 = true;
-				printf("  -> Detected as CDNA 4 (Mi355X, gfx950)\r\n");
-			} else if (deviceProp.major == 9) {
-				GpuKangs[GpuCnt]->IsCDNA3 = true;
-				printf("  -> Detected as CDNA 3 (Mi300X, gfx942)\r\n");
-			} else {
-				GpuKangs[GpuCnt]->IsCDNA3 = true;  // Conservative guess
-				printf("  -> Detected as CDNA (assuming CDNA 3 architecture)\r\n");
-			}
+		// Best detection: Check device name string (most reliable)
+		std::string deviceName(deviceProp.name);
+		if (deviceName.find("MI300X") != std::string::npos ||
+		    (deviceProp.major == 9 && deviceProp.minor == 0)) {
+			// CDNA 3 detected: MI300X or compute cap 9.0
+			GpuKangs[GpuCnt]->IsCDNA3 = true;
+			printf("  -> Detected as CDNA 3 (Mi300X, gfx942)\r\n");
+		} else if (deviceName.find("MI355X") != std::string::npos ||
+		           (deviceProp.major == 9 && deviceProp.minor >= 2)) {
+			// CDNA 4 detected: MI355X or compute cap 9.2+
+			GpuKangs[GpuCnt]->IsCDNA4 = true;
+			printf("  -> Detected as CDNA 4 (Mi355X, gfx950)\r\n");
+		} else if (deviceProp.major == 9) {
+			// Conservative: Any compute cap 9.x is likely CDNA
+			GpuKangs[GpuCnt]->IsCDNA3 = true;
+			printf("  -> Detected as CDNA 3 (compute cap 9.x)\r\n");
 		}
 
 		// RDNA 3 is modern architecture (gfx1100)
