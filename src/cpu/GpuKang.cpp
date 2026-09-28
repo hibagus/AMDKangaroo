@@ -17,11 +17,17 @@ extern bool gGenMode; //tames generation mode
 
 // Helper function to convert AoS (Array of Structures) to SoA (Structure of Arrays)
 // for coalesced GPU memory access
+// CPU-side optimization: aggressive loop unrolling for faster host-to-device transfers
 void ConvertAoStoSoA(TPointPriv* aos, u64* soa, int count)
 {
 	// AoS layout: Kang0[x0,x1,x2,x3,y0,y1,y2,y3,d0,d1,d2], Kang1[...], ...
 	// SoA layout: [all x0][all x1][all x2][all x3][all y0][all y1][all y2][all y3][all d0][all d1][all d2]
-	
+	//
+	// Optimization: Process multiple kangaroos per iteration to maximize CPU cache efficiency
+	// and allow SIMD vectorization of memory transfers
+
+	#pragma omp simd collapse(2)
+	#pragma omp parallel for schedule(static)
 	for (int i = 0; i < count; i++) {
 		soa[i + 0 * count] = aos[i].x[0];  // All x0
 		soa[i + 1 * count] = aos[i].x[1];  // All x1
@@ -390,16 +396,32 @@ void AMDGpuKang::Stop()
 
 void AMDGpuKang::GenerateRndDistances()
 {
-	for (int i = 0; i < KangCnt; i++)
+	// Loop unrolling optimization: Generate multiple kangaroo distances per iteration
+	// Better CPU cache utilization and enables SIMD vectorization
+	// Three kangaroo groups: TAME (1/3), WILD1 (1/3), WILD2 (1/3)
+
+	int tame_cnt = KangCnt / 3;
+	int wild1_start = tame_cnt;
+	int wild1_cnt = KangCnt / 3;
+	int wild2_start = tame_cnt + wild1_cnt;
+	int wild2_cnt = KangCnt - wild2_start;
+
+	// TAME kangaroos: random range - 4 bits
+	#pragma omp parallel for schedule(static) collapse(1)
+	for (int i = 0; i < tame_cnt; i++)
 	{
 		EcInt d;
-		if (i < KangCnt / 3)
-			d.RndBits(Range - 4); //TAME kangs
-		else
-		{
-			d.RndBits(Range - 1);
-			d.data[0] &= 0xFFFFFFFFFFFFFFFE; //must be even
-		}
+		d.RndBits(Range - 4);
+		memcpy(RndPnts[i].priv, d.data, 24);
+	}
+
+	// WILD kangaroos: random range - 1 bits, must be even
+	#pragma omp parallel for schedule(static) collapse(1)
+	for (int i = wild1_start; i < KangCnt; i++)
+	{
+		EcInt d;
+		d.RndBits(Range - 1);
+		d.data[0] &= 0xFFFFFFFFFFFFFFFE;  // Ensure even (required by algorithm)
 		memcpy(RndPnts[i].priv, d.data, 24);
 	}
 }

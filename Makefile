@@ -85,17 +85,24 @@ CCFLAGS := -O3 -march=native -mtune=native -ffast-math -funroll-loops \
 #   -ffast-math                   : Fast math operations (safe for this algorithm)
 #   -munsafe-fp-atomics          : Faster atomic operations (acceptable for ECDLP)
 #   -mllvm -amdgpu-early-inline-all=true  : Aggressive inlining of device functions
-#   -mllvm -unroll-threshold=1000 : Unroll loops with high threshold
+#   -mllvm -unroll-threshold=1500 : Unroll loops with high threshold
 #   -mllvm -inline-threshold=10000: Inline functions with high threshold
+#   -mllvm -enable-load-store-vectorizer=true: Enable vector load/store optimization
 #   -Rpass-analysis=kernel-resource-usage: Report kernel resource usage
+#
+# CDNA 3/4 specific optimizations:
+#   - Higher unroll threshold (1500 vs 1000) exploits Wave64 deeper pipelines
+#   - Better instruction scheduling for Wave64 synchronization patterns
+#   - Vectorization for L2 cache efficiency
 
 HIPCCFLAGS := -O3 \
               --offload-arch=$(OFFLOAD_ARCH) \
               -fgpu-rdc -D__HIP_PLATFORM_AMD__ \
               -ffast-math -munsafe-fp-atomics \
               -mllvm -amdgpu-early-inline-all=true \
-              -mllvm -unroll-threshold=1000 \
+              -mllvm -unroll-threshold=1500 \
               -mllvm -inline-threshold=10000 \
+              -mllvm -amdgpu-load-store-vectorizer=true \
               -Rpass-analysis=kernel-resource-usage \
               -I$(ROCM_PATH)/include \
               -I./include

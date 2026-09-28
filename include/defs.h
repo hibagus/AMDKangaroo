@@ -39,8 +39,19 @@ typedef char i8;                 // 8-bit signed integer
 // - Lower = more frequent sync (higher overhead, better load distribution)
 // - Higher = fewer launches (lower overhead, less responsive)
 // Note: Must be divisible by MD_LEN (10)
-// For CDNA 3/4: kept at 1000 for consistency with original tuning
-#define STEP_CNT				1000
+//
+// Optimized per architecture:
+// - RDNA 3: 1000 steps balances responsiveness with launch overhead
+// - CDNA 3/4: 1500 steps reduce launch overhead (deeper pipelines tolerate longer execution)
+//   Rationale: CDNA GPUs have 9x better memory bandwidth + 256MB L2 cache
+//   Longer kernels = fewer context switches = better cache efficiency
+#ifdef CDNA3_ARCHITECTURE
+	#define STEP_CNT			1500
+#elif defined(CDNA4_ARCHITECTURE)
+	#define STEP_CNT			1500
+#else
+	#define STEP_CNT			1000
+#endif
 
 // Number of jump table entries - MUST BE POWER OF 2
 // Larger tables give better randomization but increase memory usage and access time
