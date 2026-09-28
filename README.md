@@ -101,21 +101,23 @@ The build uses three compilers:
 
 ### Example: Puzzle #33 (32-bit)
 ```bash
-./amdkangaroo -dp 16 -range 32 -start 100000000 \
+./amdkangaroo -dp 10 -range 32 -start 100000000 \
   -pubkey 03a355aa5e2e09dd44bb46a4722e9336e9e3ee4ee4e7b7a0cf5785b283bf2ab579
 ```
 
-**Expected:** Solves in < 1 second  
+**Expected:** Solves in < 2 seconds  
 **Result:** `PRIVATE KEY: 00000000000000000000000000000000000000000000000000000001A96CA8D8`
 
 ### Example: Puzzle #40 (39-bit)
 ```bash
-./amdkangaroo -dp 16 -range 39 -start 8000000000 \
+./amdkangaroo -dp 10 -range 39 -start 8000000000 \
   -pubkey 03a2efa402fd5268400c77c20e574ba86409ededee7c4020e4b9f0edbee53de0d4
 ```
 
-**Expected:** Solves in < 1 second  
+**Expected:** Solves in 30-60 seconds  
 **Result:** `PRIVATE KEY: 000000000000000000000000000000000000000000000000000000E9AE4933D6`
+
+**Note:** Small puzzle ranges require smaller DP values. The DP value must satisfy: `DP <= Range/2 + 3`
 
 ### Example: Puzzle #85 (84-bit)
 ```bash
@@ -239,6 +241,34 @@ GPU: -O3 --offload-arch=gfx1100 -ffast-math -munsafe-fp-atomics
      -mllvm -amdgpu-early-inline-all=true
      -mllvm -unroll-threshold=1000 -mllvm -inline-threshold=10000
 ```
+
+## DP Value Selection Guide
+
+### How to Choose DP
+
+The Distinguished Points (DP) threshold is critical for algorithm performance. The correct DP value depends on your puzzle range:
+
+**Formula:** `DP should be less than Range/2 + 3` (the code enforces this)
+
+| Puzzle Range | Recommended DP | Reason |
+|-------------|----------------|--------|
+| 32 bits (Puzzle #33) | 8-11 | Small range needs small DP for sufficient distinguished points |
+| 39 bits (Puzzle #40) | 10-12 | Each DP bit doubles the distinguished point spacing |
+| 50-60 bits | 12-16 | Balances memory usage and collision probability |
+| 84 bits (Puzzle #85) | 16-20 | Larger ranges can tolerate higher DP values |
+| 100+ bits | 18-24 | Very large ranges need higher DP to manage memory |
+
+### Why This Matters
+
+Distinguished points are used for collision detection in the Kangaroo algorithm:
+- Expected DPs found = `2^(Range - DP)`
+- Operations needed ≈ `2^(Range/2)`
+- If DP is too high: few distinguished points → no collision → search never terminates
+- If DP is too low: many distinguished points → memory overflow
+
+Example for 32-bit range:
+- With DP=10: Get `2^22 = 4.2M` DPs (plenty for ~65K operations needed) ✅
+- With DP=16: Get `2^16 = 65K` DPs (barely enough, likely no collision) ❌
 
 ## Advanced Options
 
