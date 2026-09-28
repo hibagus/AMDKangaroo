@@ -47,14 +47,20 @@ Completed bring-up work:
   thread lane, matching the upstream CUDA implementation.
 - GPU state-buffer comments document dimensions, strides, packed fields, and
   producer/consumer ownership.
+- A deterministic state harness runs the production point-generation, jump, and
+  distance/history kernels one jump per launch. On MI355X, 16 samples spanning
+  lane, wave, and group boundaries match the CPU curve reference after 1, 2,
+  10, and 100 jumps, including independent first-step loop histories.
+- A bounded end-to-end MI355X regression solves the documented 32-bit puzzle
+  with the normal 1,000-step production kernels and verifies the exact private
+  key. Both new test binaries are compile-validated for MI300X.
 
 Remaining issues that must be resolved before performance can be trusted:
 
 - Forced LLVM inlining and unrolling make `KernelA` use 512 VGPRs and 948 bytes
   of scratch per thread on both targets. Plain `-O3` produces 202 VGPRs with no
   scratch for the same source.
-- There are no automated kernel-state, end-to-end, or benchmark
-  regression tests.
+- There is no reproducible performance benchmark yet.
 
 The available development system has ROCm 7.2 and eight MI355X GPUs. `gfx942`
 code generation can be checked locally, but final MI300X performance and runtime
@@ -220,7 +226,7 @@ logical commit:
 4. [x] `fix: canonicalize AMD multiplication and square reductions`
 5. [x] `test: add deterministic GPU field arithmetic validation`
 6. [x] `fix: repair kernel history indexing and document layouts`
-7. `test: validate kangaroo state and known puzzle solutions`
+7. [x] `test: validate kangaroo state and known puzzle solutions`
 8. `benchmark: add reproducible per-kernel performance reporting`
 9. `perf: remove spill-inducing compiler overrides`
 10. `perf(gfx942): tune launch geometry and LDS occupancy`

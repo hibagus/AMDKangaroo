@@ -108,7 +108,7 @@ block, point group, and thread lane. Its loads and stores now use
 `threadIdx.x` for the innermost lane index, preventing all threads in a block
 from accidentally sharing one lane's history.
 
-End-to-end CDNA correctness and performance validation are still in progress.
+Broader CDNA correctness and performance validation are still in progress.
 Current status is tracked in the
 [CDNA implementation plan](docs/CDNA_IMPLEMENTATION_PLAN.md) for current status.
 
@@ -145,6 +145,46 @@ Each test binary contains one GPU architecture and rejects an incompatible
 device before launching. The current MI355X result is 1,409/1,409 passing;
 MI300X code generation passes, but runtime validation still requires MI300X
 hardware.
+
+### Deterministic GPU Kernel-State Test
+
+The state test compiles the production `KernelGen`, `KernelA`, and `KernelB`
+with one jump per launch. It compares point coordinates and signed distances
+with the CPU secp256k1 implementation after 1, 2, 10, and 100 jumps. Its samples
+span point-group, lane, and wave boundaries, and it separately checks that each
+lane receives its own first-step loop-history value.
+
+```sh
+# Compile the state-test binaries for both CDNA targets.
+make state-tests-cdna
+
+# Run on MI355X GPU 0.
+make test-state-gfx950 STATE_TEST_GPU=0
+
+# Run this only on an MI300X host.
+make test-state-gfx942 STATE_TEST_GPU=0
+```
+
+The MI355X test passes all four checkpoints for 16 sampled kangaroos. The
+`gfx942` binary compiles successfully, but runtime validation still requires
+MI300X hardware.
+
+### Known-Puzzle Regression
+
+The end-to-end regression runs the normal 1,000-step production kernels against
+the documented 32-bit puzzle, requires the exact expected private key, and uses
+an isolated temporary directory so `RESULTS.TXT` does not alter the checkout.
+
+```sh
+make test-known-puzzle-gfx950 PUZZLE_TEST_GPU=0
+
+# Run this only on an MI300X host.
+make test-known-puzzle-gfx942 PUZZLE_TEST_GPU=0
+```
+
+The default timeout is 60 seconds and can be changed with
+`PUZZLE_TEST_TIMEOUT=<seconds>`. This regression passes on MI355X; the MI300X
+run remains pending hardware access.
 
 ## Usage
 

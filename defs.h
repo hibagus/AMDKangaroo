@@ -21,9 +21,12 @@ typedef char i8;
 
 #define MAX_GPU_CNT			32
 
-//must be divisible by MD_LEN
-// TUNING TEST: STEP_CNT = 5000 (much fewer kernel launches)
+// Production builds process 1,000 jumps per launch. Tests may override this at
+// compile time to inspect exact state after individual jumps; KernelB retains
+// its faster full-batch path whenever the value is divisible by MD_LEN.
+#ifndef STEP_CNT
 #define STEP_CNT			1000
+#endif
 
 #define JMP_CNT				512
 

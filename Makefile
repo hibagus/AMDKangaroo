@@ -66,6 +66,8 @@ FIELD_TEST_TARGET ?= gpu-field-test-$(GPU_ARCH)
 FIELD_TEST_OBJECTS := $(BUILD_DIR)/tests/GpuFieldArithmeticTest.o \
                       $(BUILD_DIR)/tests/GpuFieldArithmeticKernel.o $(BUILD_DIR)/GpuArch.o
 
+STATE_TEST_TARGET ?= gpu-state-test-$(GPU_ARCH)
+
 # ASM primitives (only if enabled)
 ifdef USE_ASM_PRIMITIVES
 ASM_SRC := secp256k1_asm_full.s inverse256_skylake.s
@@ -78,11 +80,24 @@ CPP_OBJECTS := $(addprefix $(BUILD_DIR)/,$(CPU_SRC:.cpp=.o))
 HIP_OBJECTS := $(addprefix $(BUILD_DIR)/,$(GPU_SRC:.hip=.o))
 ASM_OBJECTS := $(addprefix $(BUILD_DIR)/,$(ASM_SRC:.s=.o))
 
+# The state test links the production kernels with STEP_CNT=1, then launches
+# KernelA and KernelB repeatedly to inspect exact 1/2/10/100-jump checkpoints.
+STATE_TEST_OBJECTS := $(BUILD_DIR)/tests/GpuKangarooStateTest.o \
+                      $(BUILD_DIR)/tests/AMDGpuCoreStateTest.o \
+                      $(BUILD_DIR)/GpuArch.o $(BUILD_DIR)/Ec.o \
+                      $(BUILD_DIR)/utils.o $(ASM_OBJECTS)
+ifdef USE_ASM_PRIMITIVES
+STATE_TEST_OBJECTS += $(BUILD_DIR)/InvModP_wrapper.o
+endif
+
 all: $(TARGET)
 
 .PHONY: all all-cdna all-arch clean gfx1100 gfx942 gfx950
 .PHONY: field-test field-tests-cdna field-test-gfx942 field-test-gfx950
 .PHONY: test-field test-field-gfx942 test-field-gfx950
+.PHONY: state-test state-tests-cdna state-test-gfx942 state-test-gfx950
+.PHONY: test-state test-state-gfx942 test-state-gfx950
+.PHONY: test-known-puzzle test-known-puzzle-gfx942 test-known-puzzle-gfx950
 
 # These convenience targets use recursive Make invocations so each architecture
 # receives its own variables and object directory, including under parallel Make.
@@ -110,6 +125,29 @@ test-field-gfx942 test-field-gfx950:
 	$(MAKE) GPU_ARCH=$(patsubst test-field-%,%,$@) \
 		FIELD_TEST_TARGET=gpu-field-test-$(patsubst test-field-%,%,$@) test-field
 
+state-tests-cdna: state-test-gfx942 state-test-gfx950
+
+state-test-gfx942 state-test-gfx950:
+	$(MAKE) GPU_ARCH=$(patsubst state-test-%,%,$@) \
+		STATE_TEST_TARGET=gpu-state-test-$(patsubst state-test-%,%,$@) state-test
+
+test-state: state-test
+	./$(STATE_TEST_TARGET) --gpu $(or $(STATE_TEST_GPU),0)
+
+test-state-gfx942 test-state-gfx950:
+	$(MAKE) GPU_ARCH=$(patsubst test-state-%,%,$@) \
+		STATE_TEST_TARGET=gpu-state-test-$(patsubst test-state-%,%,$@) test-state
+
+# The script runs in a temporary directory, checks the exact recovered key, and
+# removes the generated RESULTS.TXT when it exits.
+test-known-puzzle: $(TARGET)
+	tests/run_known_puzzle.sh ./$(TARGET) $(or $(PUZZLE_TEST_GPU),0) \
+		$(or $(PUZZLE_TEST_TIMEOUT),60)
+
+test-known-puzzle-gfx942 test-known-puzzle-gfx950:
+	$(MAKE) GPU_ARCH=$(patsubst test-known-puzzle-%,%,$@) \
+		TARGET=amdkangaroo-$(patsubst test-known-puzzle-%,%,$@) test-known-puzzle
+
 $(TARGET): $(CPP_OBJECTS) $(HIP_OBJECTS) $(ASM_OBJECTS)
 	$(HIPCC) $(GPU_ARCH_FLAG) -fgpu-rdc $(CCFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -117,6 +155,20 @@ field-test: $(FIELD_TEST_TARGET)
 
 $(FIELD_TEST_TARGET): $(FIELD_TEST_OBJECTS)
 	$(HIPCC) $(GPU_ARCH_FLAG) -fgpu-rdc $(CCFLAGS) -o $@ $^ $(LDFLAGS)
+
+state-test: $(STATE_TEST_TARGET)
+
+$(STATE_TEST_TARGET): $(STATE_TEST_OBJECTS)
+	$(HIPCC) $(GPU_ARCH_FLAG) -fgpu-rdc $(CCFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(BUILD_DIR)/tests/GpuKangarooStateTest.o: tests/GpuKangarooStateTest.cpp
+	@mkdir -p $(@D)
+	$(CC) $(CCFLAGS) -DSTEP_CNT=1 -c $< -o $@
+
+$(BUILD_DIR)/tests/AMDGpuCoreStateTest.o: AMDGpuCore.hip
+	@mkdir -p $(@D)
+	$(HIPCC) $(HIPCCFLAGS) -DSTEP_CNT=1 -DAMDK_KERNEL_STATE_TEST \
+		-c $< -o $@
 
 $(BUILD_DIR)/%.o: %.cpp
 	@mkdir -p $(@D)
@@ -134,3 +186,4 @@ clean:
 	$(RM) -r $(BUILD_ROOT)
 	$(RM) amdkangaroo amdkangaroo-gfx1100 amdkangaroo-gfx942 amdkangaroo-gfx950
 	$(RM) gpu-field-test-gfx1100 gpu-field-test-gfx942 gpu-field-test-gfx950
+	$(RM) gpu-state-test-gfx1100 gpu-state-test-gfx942 gpu-state-test-gfx950

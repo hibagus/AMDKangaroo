@@ -2,6 +2,7 @@
 amdkangaroo
 amdkangaroo-gfx*
 gpu-field-test-gfx*
+gpu-state-test-gfx*
 *.o
 *.a
 *.so

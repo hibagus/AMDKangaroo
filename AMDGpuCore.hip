@@ -653,6 +653,7 @@ __global__ void KernelB(const TKparams Kparams)
 		u32 step_ind = 0;
 		while (step_ind < STEP_CNT)
 		{
+#if (STEP_CNT % MD_LEN) == 0
 			DO_ITER(0);
 			DO_ITER(1);
 			DO_ITER(2);
@@ -663,6 +664,30 @@ __global__ void KernelB(const TKparams Kparams)
 			DO_ITER(7);
 			DO_ITER(8);
 			DO_ITER(9);
+#else
+			// Deterministic state tests compile one jump per launch so they can
+			// inspect exact checkpoints. Production's divisible step count uses
+			// the unguarded path above and pays no cost for these boundaries.
+			DO_ITER(0);
+			if (step_ind >= STEP_CNT) continue;
+			DO_ITER(1);
+			if (step_ind >= STEP_CNT) continue;
+			DO_ITER(2);
+			if (step_ind >= STEP_CNT) continue;
+			DO_ITER(3);
+			if (step_ind >= STEP_CNT) continue;
+			DO_ITER(4);
+			if (step_ind >= STEP_CNT) continue;
+			DO_ITER(5);
+			if (step_ind >= STEP_CNT) continue;
+			DO_ITER(6);
+			if (step_ind >= STEP_CNT) continue;
+			DO_ITER(7);
+			if (step_ind >= STEP_CNT) continue;
+			DO_ITER(8);
+			if (step_ind >= STEP_CNT) continue;
+			DO_ITER(9);
+#endif
 		}
 
 		Kparams.Kangs[kang_ind + 8 * stride] = dA[0];
@@ -907,6 +932,41 @@ __global__ void KernelGen(const TKparams Kparams)
 		Kparams.Kangs[kang_ind + 7 * stride] = y[3];
 	}
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#ifdef AMDK_KERNEL_STATE_TEST
+hipError_t CallGpuKernelABForTest(TKparams Kparams, const char*& failedOperation)
+{
+	// This wrapper exists only in the test code object. A one-step A/B launch
+	// lets the host compare point, distance, and history state at exact
+	// checkpoints without changing the optimized production launch contract.
+	failedOperation = "KernelA state-test launch";
+	KernelA<<<Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelA_LDS_Size>>>(Kparams);
+	hipError_t err = hipGetLastError();
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = "KernelA state-test execution";
+	err = hipDeviceSynchronize();
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = "KernelB state-test launch";
+	KernelB<<<Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelB_LDS_Size>>>(Kparams);
+	err = hipGetLastError();
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = "KernelB state-test execution";
+	err = hipDeviceSynchronize();
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = nullptr;
+	return hipSuccess;
+}
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
