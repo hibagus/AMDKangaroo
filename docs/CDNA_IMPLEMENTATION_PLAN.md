@@ -26,7 +26,8 @@ measurements change the plan or a milestone is completed.
 The current source is an RDNA 3-oriented HIP port and is not yet a working CDNA
 implementation. These issues must be resolved before performance can be trusted:
 
-- The Makefile targets only `gfx1100`.
+- Architecture-specific build targets now exist, but CDNA runtime profiles and
+  validation are not implemented yet.
 - Compile-time kernel geometry is 256 threads by 24 point groups, while runtime
   selects 512 threads by 64 groups for CDNA devices.
 - Device discovery doubles the CU count and uses CUDA/RDNA heuristics to select
@@ -197,7 +198,7 @@ portable reference implementation, and passes every arithmetic test.
 The sequence can be refined by measurements, but each entry remains a separate
 logical commit:
 
-1. `build: add gfx942 and gfx950 target profiles`
+1. [x] `build: add gfx942 and gfx950 target profiles`
 2. `runtime: detect CDNA devices from HIP architecture properties`
 3. `runtime: fail fast on HIP API and kernel errors`
 4. `test: add deterministic GPU field arithmetic validation`

@@ -1,10 +1,12 @@
 # Compiled binaries
 amdkangaroo
+amdkangaroo-gfx*
 *.o
 *.a
 *.so
 
 # Build artifacts
+build/
 *.d
 *.dSYM/
 

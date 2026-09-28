@@ -3,11 +3,24 @@ HIPCC := hipcc
 AS := as
 ROCM_PATH ?= /opt/rocm
 
+# Build GPU objects in architecture-specific directories. This prevents Make
+# from reusing a code object compiled for a different GPU after GPU_ARCH changes.
+SUPPORTED_GPU_ARCHS := gfx1100 gfx942 gfx950
+GPU_ARCH ?= gfx950
+BUILD_ROOT := build
+BUILD_DIR := $(BUILD_ROOT)/$(GPU_ARCH)
+# Keep the historical executable name for a default or GPU_ARCH-selected build.
+# Explicit architecture targets below use names that can coexist.
+TARGET ?= amdkangaroo
+
+ifeq ($(filter $(GPU_ARCH),$(SUPPORTED_GPU_ARCHS)),)
+$(error Unsupported GPU_ARCH '$(GPU_ARCH)'; choose one of: $(SUPPORTED_GPU_ARCHS))
+endif
+
 # Enable ASM primitives (comment out to disable)
 USE_ASM_PRIMITIVES := 1
 
-# AMD 7900 XTX uses gfx1100 architecture (RDNA 3)
-# Aggressive optimization flags for maximum performance
+# Host compiler flags are shared because the CPU code is architecture-neutral.
 CCFLAGS := -O3 -march=native -mtune=native -ffast-math -funroll-loops \
            -finline-functions -fomit-frame-pointer \
            -fno-stack-protector -fno-plt -fprefetch-loop-arrays \
@@ -24,14 +37,15 @@ ifdef USE_ASM_PRIMITIVES
 CCFLAGS += -DUSE_ASM_PRIMITIVES
 endif
 
-# GPU optimization flags for AMD RDNA 3
+# GPU_ARCH selects one code object per binary so CDNA targets can be tuned
+# independently without weakening the existing gfx1100 build.
+# The inherited LLVM overrides are intentionally retained in this build-only
+# change. A later measured change will remove or tune them.
 # -O3: Maximum optimization
-# -ffast-math: Aggressive math optimizations (safe for crypto operations)
 # -fgpu-rdc: Relocatable device code for separate compilation
-# -munsafe-fp-atomics: Faster atomic operations
-# RDNA 3 uses wave32 natively
-# LLVM optimizations for aggressive inlining and loop unrolling
-HIPCCFLAGS := -O3 --offload-arch=gfx1100 -fgpu-rdc -D__HIP_PLATFORM_AMD__ \
+# -Rpass-analysis: Report kernel resource usage when supported by the compiler
+GPU_ARCH_FLAG := --offload-arch=$(GPU_ARCH)
+HIPCCFLAGS := -O3 $(GPU_ARCH_FLAG) -fgpu-rdc -D__HIP_PLATFORM_AMD__ \
               -ffast-math -munsafe-fp-atomics \
               -mllvm -amdgpu-early-inline-all=true \
               -mllvm -unroll-threshold=1000 \
@@ -43,34 +57,46 @@ LDFLAGS := -L$(ROCM_PATH)/lib -lamdhip64 -pthread
 CPU_SRC := AMDKangaroo.cpp GpuKang.cpp Ec.cpp utils.cpp
 GPU_SRC := AMDGpuCore.hip
 
-CPP_OBJECTS := $(CPU_SRC:.cpp=.o)
-HIP_OBJECTS := $(GPU_SRC:.hip=.o)
-
 # ASM primitives (only if enabled)
 ifdef USE_ASM_PRIMITIVES
 ASM_SRC := secp256k1_asm_full.s inverse256_skylake.s
-ASM_OBJECTS := $(ASM_SRC:.s=.o)
 CPU_SRC += InvModP_wrapper.cpp
-CPP_OBJECTS := $(CPU_SRC:.cpp=.o)
 else
-ASM_OBJECTS :=
+ASM_SRC :=
 endif
 
-TARGET := amdkangaroo
+CPP_OBJECTS := $(addprefix $(BUILD_DIR)/,$(CPU_SRC:.cpp=.o))
+HIP_OBJECTS := $(addprefix $(BUILD_DIR)/,$(GPU_SRC:.hip=.o))
+ASM_OBJECTS := $(addprefix $(BUILD_DIR)/,$(ASM_SRC:.s=.o))
 
 all: $(TARGET)
 
-$(TARGET): $(CPP_OBJECTS) $(HIP_OBJECTS) $(ASM_OBJECTS)
-	$(HIPCC) --offload-arch=gfx1100 -fgpu-rdc $(CCFLAGS) -o $@ $^ $(LDFLAGS)
+.PHONY: all all-cdna all-arch clean gfx1100 gfx942 gfx950
 
-%.o: %.cpp
+# These convenience targets use recursive Make invocations so each architecture
+# receives its own variables and object directory, including under parallel Make.
+gfx1100 gfx942 gfx950:
+	$(MAKE) GPU_ARCH=$@ TARGET=amdkangaroo-$@ all
+
+all-cdna: gfx942 gfx950
+
+all-arch: gfx1100 all-cdna
+
+$(TARGET): $(CPP_OBJECTS) $(HIP_OBJECTS) $(ASM_OBJECTS)
+	$(HIPCC) $(GPU_ARCH_FLAG) -fgpu-rdc $(CCFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(BUILD_DIR)/%.o: %.cpp
+	@mkdir -p $(@D)
 	$(CC) $(CCFLAGS) -c $< -o $@
 
-%.o: %.hip
+$(BUILD_DIR)/%.o: %.hip
+	@mkdir -p $(@D)
 	$(HIPCC) $(HIPCCFLAGS) -c $< -o $@
 
-%.o: %.s
+$(BUILD_DIR)/%.o: %.s
+	@mkdir -p $(@D)
 	$(AS) $(ASFLAGS) $< -o $@
 
 clean:
-	rm -f $(CPP_OBJECTS) $(HIP_OBJECTS) $(ASM_OBJECTS) $(TARGET)
+	$(RM) -r $(BUILD_ROOT)
+	$(RM) amdkangaroo amdkangaroo-gfx1100 amdkangaroo-gfx942 amdkangaroo-gfx950

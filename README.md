@@ -41,13 +41,14 @@ AMDKangaroo is a fast GPU implementation of the Pollard's Kangaroo algorithm for
 ## System Requirements
 
 ### Hardware
-- **GPU:** AMD RDNA 3 (Radeon RX 7900 XTX tested, other RDNA 3 GPUs should work)
+- **GPU:** AMD Radeon RX 7900 XTX (`gfx1100`), AMD Instinct MI300X (`gfx942`),
+  or AMD Instinct MI355X (`gfx950`)
 - **RAM:** 4+ GB recommended
 - **Disk:** Minimal (< 1 GB)
 
 ### Software
 - **OS:** Linux (tested on Ubuntu/Debian)
-- **ROCm:** 6.0+ (tested with 6.4.3)
+- **ROCm:** 6.0+ for RDNA 3; current CDNA development uses ROCm 7.2
 - **Compiler:** hipcc (comes with ROCm)
 - **g++:** 11.4.0 or newer
 
@@ -62,10 +63,10 @@ sudo apt install ./amdgpu-install_6.0.60002-1_all.deb
 sudo amdgpu-install --usecase=rocm
 
 # Verify installation
-rocminfo | grep gfx1100
+rocminfo | grep -E 'gfx1100|gfx942|gfx950'
 ```
 
-### 2. Build AMDKangaroo## Building
+### 2. Build AMDKangaroo
 
 ```bash
 cd AMDKangaroo
@@ -73,18 +74,36 @@ make clean
 make
 ```
 
-The Makefile is configured for AMD RDNA 3 (gfx1100). If you have a different GPU, modify the `--offload-arch` flag in the Makefile.
+The default build targets `gfx950` and retains the historical `amdkangaroo`
+executable name. Explicit architecture targets create binaries that can coexist:
+
+```sh
+make gfx942
+make gfx950
+make gfx1100
+
+# Build both CDNA targets.
+make all-cdna
+```
+
+- `amdkangaroo-gfx942` targets MI300X.
+- `amdkangaroo-gfx950` targets MI355X.
+- `amdkangaroo-gfx1100` preserves the Radeon RX 7900 XTX build.
+
+Every architecture uses a separate object directory, so switching targets
+cannot reuse an incompatible GPU object. The CDNA binaries compile, but runtime
+bring-up and performance validation are still in progress. See the
+[CDNA implementation plan](docs/CDNA_IMPLEMENTATION_PLAN.md) for current status.
 
 ### Build Configuration
 
 The build uses three compilers:
-- **hipcc** (ROCm) - GPU kernel compilation with aggressive optimizations
+- **hipcc** (ROCm) - GPU kernel compilation for the selected `GPU_ARCH`
 - **g++** - CPU code with `-O3 -march=native` for maximum performance  
 - **as** (GNU assembler) - x86-64 assembly primitives (optional)
 
-**Assembly Primitives:** Enabled by default for 10-20% performance boost. To disable, comment out `USE_ASM_PRIMITIVES := 1` in the Makefile.
-
-**See:** `COMPILER_REQUIREMENTS.md` for detailed compiler flags and optimization settings.
+**Assembly primitives:** Enabled by default. To disable them, comment out
+`USE_ASM_PRIMITIVES := 1` in the Makefile.
 
 ## Usage
 
@@ -235,7 +254,7 @@ echo $PATH | grep rocm
 ### Compiler Optimizations Applied
 ```makefile
 CPU: -O3 -march=native -ffast-math -funroll-loops -ftree-vectorize
-GPU: -O3 --offload-arch=gfx1100 -ffast-math -munsafe-fp-atomics
+GPU: -O3 --offload-arch=$(GPU_ARCH) -ffast-math -munsafe-fp-atomics
      -mllvm -amdgpu-early-inline-all=true
      -mllvm -unroll-threshold=1000 -mllvm -inline-threshold=10000
 ```
@@ -267,7 +286,8 @@ For detailed technical information about the port, see:
 
 ## Known Limitations
 
-1. **AMD-specific:** This port is optimized for AMD RDNA 3. Older AMD architectures may work but are untested.
+1. **CDNA bring-up:** `gfx942` and `gfx950` build targets are available, but
+   runtime correctness and performance validation are still in progress.
 2. **Linux only:** ROCm primarily supports Linux. Windows support via WSL2 is experimental.
 3. **Single GPU:** Multi-GPU support exists but is untested on AMD.
 
@@ -298,6 +318,7 @@ This software is for educational and research purposes only. The author is not r
 
 ---
 
-**AMD Port Status:** ✅ Production Ready  
-**Last Updated:** November 12, 2025  
-**Tested On:** AMD Radeon RX 7900 XTX with ROCm 6.4.3
+- **RDNA 3 port status:** Existing `gfx1100` implementation
+- **CDNA port status:** Bring-up in progress
+- **Last updated:** September 28, 2026
+- **Tested on:** AMD Radeon RX 7900 XTX with ROCm 6.4.3
