@@ -51,6 +51,8 @@ AMDKangaroo is a fast GPU implementation of the Pollard's Kangaroo algorithm for
 - **ROCm:** 6.0+ for RDNA 3; current CDNA development uses ROCm 7.2
 - **Compiler:** hipcc (comes with ROCm)
 - **g++:** 11.4.0 or newer
+- **Boost headers:** Multiprecision is required only to build the independent
+  host reference used by the GPU field-arithmetic test
 
 ## Installation
 
@@ -115,6 +117,30 @@ The build uses three compilers:
 
 **Assembly primitives:** Enabled by default. To disable them, comment out
 `USE_ASM_PRIMITIVES := 1` in the Makefile.
+
+### Deterministic GPU Field-Arithmetic Test
+
+The test calls the same device functions used by the solver and compares 1,409
+fixed cases with an independent Boost.Multiprecision reference. It covers
+modular negate, add, subtract, multiply, square, and inverse operations across
+zero, one, `p - 1`, carry- and borrow-heavy boundaries, and fixed-seed random
+inputs.
+
+```sh
+# Compile test binaries for both CDNA targets without running them.
+make field-tests-cdna
+
+# Run on MI355X GPU 0. Choose another visible device with FIELD_TEST_GPU.
+make test-field-gfx950 FIELD_TEST_GPU=0
+
+# Run this only on an MI300X host.
+make test-field-gfx942 FIELD_TEST_GPU=0
+```
+
+Each test binary contains one GPU architecture and rejects an incompatible
+device before launching. The current MI355X result is 1,409/1,409 passing;
+MI300X code generation passes, but runtime validation still requires MI300X
+hardware.
 
 ## Usage
 

@@ -60,6 +60,12 @@ LDFLAGS := -L$(ROCM_PATH)/lib -lamdhip64 -pthread
 CPU_SRC := AMDKangaroo.cpp GpuKang.cpp GpuArch.cpp Ec.cpp utils.cpp
 GPU_SRC := AMDGpuCore.hip
 
+# The field test links the production device-arithmetic header into a small,
+# architecture-specific kernel and compares its output with a host reference.
+FIELD_TEST_TARGET ?= gpu-field-test-$(GPU_ARCH)
+FIELD_TEST_OBJECTS := $(BUILD_DIR)/tests/GpuFieldArithmeticTest.o \
+                      $(BUILD_DIR)/tests/GpuFieldArithmeticKernel.o $(BUILD_DIR)/GpuArch.o
+
 # ASM primitives (only if enabled)
 ifdef USE_ASM_PRIMITIVES
 ASM_SRC := secp256k1_asm_full.s inverse256_skylake.s
@@ -75,6 +81,8 @@ ASM_OBJECTS := $(addprefix $(BUILD_DIR)/,$(ASM_SRC:.s=.o))
 all: $(TARGET)
 
 .PHONY: all all-cdna all-arch clean gfx1100 gfx942 gfx950
+.PHONY: field-test field-tests-cdna field-test-gfx942 field-test-gfx950
+.PHONY: test-field test-field-gfx942 test-field-gfx950
 
 # These convenience targets use recursive Make invocations so each architecture
 # receives its own variables and object directory, including under parallel Make.
@@ -85,7 +93,29 @@ all-cdna: gfx942 gfx950
 
 all-arch: gfx1100 all-cdna
 
+# Build both CDNA field-test binaries without trying to execute the gfx942
+# binary on a development host that may only have gfx950 hardware.
+field-tests-cdna: field-test-gfx942 field-test-gfx950
+
+field-test-gfx942 field-test-gfx950:
+	$(MAKE) GPU_ARCH=$(patsubst field-test-%,%,$@) \
+		FIELD_TEST_TARGET=gpu-field-test-$(patsubst field-test-%,%,$@) field-test
+
+# Run the test selected by GPU_ARCH. FIELD_TEST_GPU remains overridable for
+# multi-GPU systems and defaults to the first visible device.
+test-field: field-test
+	./$(FIELD_TEST_TARGET) --gpu $(or $(FIELD_TEST_GPU),0)
+
+test-field-gfx942 test-field-gfx950:
+	$(MAKE) GPU_ARCH=$(patsubst test-field-%,%,$@) \
+		FIELD_TEST_TARGET=gpu-field-test-$(patsubst test-field-%,%,$@) test-field
+
 $(TARGET): $(CPP_OBJECTS) $(HIP_OBJECTS) $(ASM_OBJECTS)
+	$(HIPCC) $(GPU_ARCH_FLAG) -fgpu-rdc $(CCFLAGS) -o $@ $^ $(LDFLAGS)
+
+field-test: $(FIELD_TEST_TARGET)
+
+$(FIELD_TEST_TARGET): $(FIELD_TEST_OBJECTS)
 	$(HIPCC) $(GPU_ARCH_FLAG) -fgpu-rdc $(CCFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(BUILD_DIR)/%.o: %.cpp
@@ -103,3 +133,4 @@ $(BUILD_DIR)/%.o: %.s
 clean:
 	$(RM) -r $(BUILD_ROOT)
 	$(RM) amdkangaroo amdkangaroo-gfx1100 amdkangaroo-gfx942 amdkangaroo-gfx950
+	$(RM) gpu-field-test-gfx1100 gpu-field-test-gfx942 gpu-field-test-gfx950

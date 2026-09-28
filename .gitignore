@@ -1,6 +1,7 @@
 # Compiled binaries
 amdkangaroo
 amdkangaroo-gfx*
+gpu-field-test-gfx*
 *.o
 *.a
 *.so

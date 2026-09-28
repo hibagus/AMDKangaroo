@@ -40,6 +40,9 @@ Completed bring-up work:
 - AMD modular multiplication and squaring now fold final 256-bit carries,
   canonicalize results below the secp256k1 prime, and give the square
   accumulator a valid carry limb.
+- A deterministic GPU harness validates 1,409 negate, add, subtract, multiply,
+  square, and inverse cases against an independent host reference. All cases
+  pass on MI355X; the MI300X test binary is compile-validated.
 
 Remaining issues that must be resolved before performance can be trusted:
 
@@ -47,7 +50,7 @@ Remaining issues that must be resolved before performance can be trusted:
 - Forced LLVM inlining and unrolling make `KernelA` use 512 VGPRs and 948 bytes
   of scratch per thread on both targets. Plain `-O3` produces 202 VGPRs with no
   scratch for the same source.
-- There are no automated GPU arithmetic, kernel-state, end-to-end, or benchmark
+- There are no automated kernel-state, end-to-end, or benchmark
   regression tests.
 
 The available development system has ROCm 7.2 and eight MI355X GPUs. `gfx942`
@@ -212,7 +215,7 @@ logical commit:
 2. [x] `runtime: detect CDNA devices from HIP architecture properties`
 3. [x] `runtime: fail fast on HIP API and kernel errors`
 4. [x] `fix: canonicalize AMD multiplication and square reductions`
-5. `test: add deterministic GPU field arithmetic validation`
+5. [x] `test: add deterministic GPU field arithmetic validation`
 6. `fix: repair kernel history indexing and document layouts`
 7. `test: validate kangaroo state and known puzzle solutions`
 8. `benchmark: add reproducible per-kernel performance reporting`
