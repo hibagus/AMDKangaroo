@@ -45,7 +45,10 @@ endif
 # -fgpu-rdc: Relocatable device code for separate compilation
 # -Rpass-analysis: Report kernel resource usage when supported by the compiler
 GPU_ARCH_FLAG := --offload-arch=$(GPU_ARCH)
-HIPCCFLAGS := -O3 $(GPU_ARCH_FLAG) -fgpu-rdc -D__HIP_PLATFORM_AMD__ \
+# Record the code-object target in host code for an early runtime compatibility check.
+GPU_ARCH_CPPFLAG := -DAMDK_TARGET_ARCH=\"$(GPU_ARCH)\"
+CCFLAGS += $(GPU_ARCH_CPPFLAG)
+HIPCCFLAGS := -O3 $(GPU_ARCH_FLAG) $(GPU_ARCH_CPPFLAG) -fgpu-rdc -D__HIP_PLATFORM_AMD__ \
               -ffast-math -munsafe-fp-atomics \
               -mllvm -amdgpu-early-inline-all=true \
               -mllvm -unroll-threshold=1000 \
@@ -54,7 +57,7 @@ HIPCCFLAGS := -O3 $(GPU_ARCH_FLAG) -fgpu-rdc -D__HIP_PLATFORM_AMD__ \
 
 LDFLAGS := -L$(ROCM_PATH)/lib -lamdhip64 -pthread
 
-CPU_SRC := AMDKangaroo.cpp GpuKang.cpp Ec.cpp utils.cpp
+CPU_SRC := AMDKangaroo.cpp GpuKang.cpp GpuArch.cpp Ec.cpp utils.cpp
 GPU_SRC := AMDGpuCore.hip
 
 # ASM primitives (only if enabled)

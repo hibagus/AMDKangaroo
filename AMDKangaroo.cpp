@@ -4,6 +4,7 @@
 // License: GPLv3, see "LICENSE.TXT" file
 
 
+#include <cstring>
 #include <iostream>
 #include <vector>
 
@@ -97,28 +98,54 @@ void InitGpus()
 
 		hipDeviceProp_t deviceProp;
 		hipGetDeviceProperties(&deviceProp, i);
-		// For AMD RDNA 3: multiProcessorCount reports WGPs (Workgroup Processors)
-		// 1 WGP = 2 CUs, so multiply by 2 for actual CU count
-		int actualCUs = deviceProp.multiProcessorCount * 2;
-		printf("GPU %d: %s, %.2f GB, %d CUs, cap %d.%d, PCI %d, L2 size: %d KB\r\n", i, deviceProp.name, ((float)(deviceProp.totalGlobalMem / (1024 * 1024))) / 1024.0f, actualCUs, deviceProp.major, deviceProp.minor, deviceProp.pciBusID, deviceProp.l2CacheSize / 1024);
-		
-		if (deviceProp.major < 6)
+		const AMDGpuProfile* profile = FindAMDGpuProfile(deviceProp.gcnArchName);
+		if (!profile)
 		{
-			printf("GPU %d - not supported, skip\r\n", i);
+			printf("GPU %d: unsupported architecture '%s'; expected gfx1100, gfx942, or gfx950\r\n",
+				i, deviceProp.gcnArchName);
 			continue;
 		}
+
+		if (std::strcmp(profile->Name, GetCompiledGpuArchitecture()) != 0)
+		{
+			printf("GPU %d: %s device cannot use this %s binary; skipping\r\n",
+				i, profile->Name, GetCompiledGpuArchitecture());
+			continue;
+		}
+
+		if (profile->BlockSize > deviceProp.maxThreadsPerBlock)
+		{
+			printf("GPU %d: profile requires %d threads per block, but device allows %d; skipping\r\n",
+				i, profile->BlockSize, deviceProp.maxThreadsPerBlock);
+			continue;
+		}
+
+		// KernelC has the largest dynamic LDS request among the current kernels.
+		const size_t requiredLdsBytes = 96ULL * JMP_CNT;
+		if (requiredLdsBytes > deviceProp.sharedMemPerBlock)
+		{
+			printf("GPU %d: kernels require %zu KB LDS, but device allows %zu KB; skipping\r\n",
+				i, requiredLdsBytes / 1024, deviceProp.sharedMemPerBlock / 1024);
+			continue;
+		}
+
+		const int actualCUs = deviceProp.multiProcessorCount * profile->ComputeUnitsPerProcessor;
+		printf("GPU %d: %s, %.2f GB, architecture %s, wave %d, "
+			"scheduler units: %d %s, physical CUs: %d, "
+			"LDS/block: %zu KB, LDS/processor: %zu KB, PCI %d, L2 size: %d KB\r\n",
+			i, deviceProp.name, static_cast<double>(deviceProp.totalGlobalMem) / (1024.0 * 1024.0 * 1024.0),
+			profile->Name, deviceProp.warpSize, deviceProp.multiProcessorCount,
+			profile->ProcessorUnitName, actualCUs, deviceProp.sharedMemPerBlock / 1024,
+			deviceProp.maxSharedMemoryPerMultiProcessor / 1024, deviceProp.pciBusID,
+			deviceProp.l2CacheSize / 1024);
 
 		hipSetDeviceFlags(hipDeviceScheduleBlockingSync);
 
 		GpuKangs[GpuCnt] = new AMDGpuKang();
-		GpuKangs[GpuCnt]->CudaIndex = i;
+		GpuKangs[GpuCnt]->DeviceIndex = i;
 		GpuKangs[GpuCnt]->persistingL2CacheMaxSize = deviceProp.persistingL2CacheMaxSize;
-		GpuKangs[GpuCnt]->mpCnt = deviceProp.multiProcessorCount;
-		// AMD RDNA 3 (gfx11xx) is modern architecture, not old GPU
-		// For NVIDIA: old GPU if L2 < 16MB (pre-RTX 40xx)
-		// For AMD: check compute capability (11.x = RDNA 3 = modern)
-		bool isAmdRdna3 = (deviceProp.major == 11);
-		GpuKangs[GpuCnt]->IsOldGpu = isAmdRdna3 ? false : (deviceProp.l2CacheSize < 16 * 1024 * 1024);
+		GpuKangs[GpuCnt]->ProcessorCount = deviceProp.multiProcessorCount;
+		GpuKangs[GpuCnt]->Profile = profile;
 		GpuCnt++;
 	}
 	printf("Total GPUs for work: %d\r\n", GpuCnt);
@@ -426,7 +453,7 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 		if (!GpuKangs[i]->Prepare(PntToSolve, Range, DP, EcJumps1, EcJumps2, EcJumps3))
 		{
 			GpuKangs[i]->Failed = true;
-			printf("GPU %d Prepare failed\r\n", GpuKangs[i]->CudaIndex);
+			printf("GPU %d Prepare failed\r\n", GpuKangs[i]->DeviceIndex);
 		}
 
 	u64 tm0 = GetTickCount64();

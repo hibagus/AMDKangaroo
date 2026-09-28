@@ -7,6 +7,7 @@
 #pragma once
 
 #include "Ec.h"
+#include "GpuArch.h"
 
 #define STATS_WND_SIZE	16
 
@@ -58,11 +59,11 @@ private:
 #endif
 public:
 	int persistingL2CacheMaxSize;
-	int CudaIndex; //gpu index in cuda
-	int mpCnt;
+	int DeviceIndex; // Index used by the HIP runtime.
+	int ProcessorCount; // HIP reports CUs on CDNA and WGPs on RDNA.
 	int KangCnt;
 	bool Failed;
-	bool IsOldGpu;
+	const AMDGpuProfile* Profile;
 
 	int CalcKangCnt();
 	bool Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJumps1, EcJMP* _EcJumps2, EcJMP* _EcJumps3);

@@ -27,7 +27,7 @@ typedef char i8;
 
 #define JMP_CNT				512
 
-//use different options for cards older than RTX 40xx / AMD RDNA 3
+// Preserve the upstream CUDA modes; HIP targets use explicit AMD profiles below.
 #ifdef __CUDA_ARCH__
 	#if __CUDA_ARCH__ < 890
 		#define OLD_GPU
@@ -42,8 +42,9 @@ typedef char i8;
 		#define PNT_GROUP_CNT		24
 	#endif
 #elif defined(__HIP_PLATFORM_AMD__)
-	// AMD RDNA 3 (7900 XTX) - Optimized configuration
-	// OPTIMAL: BLOCK_SIZE=256, PNT_GROUP_CNT=16 → 1748 Mk/s (34% improvement)
+	// Conservative shared geometry for gfx1100, gfx942, and gfx950 bring-up.
+	// Architecture-specific values will be introduced only after correctness tests
+	// and occupancy measurements justify them.
 	#define BLOCK_SIZE			256
 	#define PNT_GROUP_CNT		24
 #else //CPU, fake values

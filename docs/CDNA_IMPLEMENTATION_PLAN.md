@@ -23,15 +23,21 @@ measurements change the plan or a milestone is completed.
 
 ## Current baseline
 
-The current source is an RDNA 3-oriented HIP port and is not yet a working CDNA
-implementation. These issues must be resolved before performance can be trusted:
+The source now has architecture-specific builds and runtime profiles for
+`gfx1100`, `gfx942`, and `gfx950`, but the CDNA implementation is not yet
+correctness- or performance-validated.
 
-- Architecture-specific build targets now exist, but CDNA runtime profiles and
-  validation are not implemented yet.
-- Compile-time kernel geometry is 256 threads by 24 point groups, while runtime
-  selects 512 threads by 64 groups for CDNA devices.
-- Device discovery doubles the CU count and uses CUDA/RDNA heuristics to select
-  a kernel mode.
+Completed bring-up work:
+
+- Build outputs and object directories are isolated by target architecture.
+- Runtime selection uses HIP's `gcnArchName` and reports wave size, processor
+  count, and LDS capacity without assuming a full physical device.
+- Host launch geometry comes from the same 256-thread, 24-group constants used
+  to compile the HIP kernels.
+- MI355X completed a bounded kernel-launch smoke test without a HIP launch error.
+
+Remaining issues that must be resolved before performance can be trusted:
+
 - `KernelB` uses the block index for four per-thread loop-history accesses.
 - Kernel failures are printed repeatedly instead of stopping the failed worker.
 - Forced LLVM inlining and unrolling make `KernelA` use 512 VGPRs and 948 bytes
@@ -199,7 +205,7 @@ The sequence can be refined by measurements, but each entry remains a separate
 logical commit:
 
 1. [x] `build: add gfx942 and gfx950 target profiles`
-2. `runtime: detect CDNA devices from HIP architecture properties`
+2. [x] `runtime: detect CDNA devices from HIP architecture properties`
 3. `runtime: fail fast on HIP API and kernel errors`
 4. `test: add deterministic GPU field arithmetic validation`
 5. `fix: repair kernel history indexing and document layouts`

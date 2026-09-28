@@ -91,8 +91,13 @@ make all-cdna
 - `amdkangaroo-gfx1100` preserves the Radeon RX 7900 XTX build.
 
 Every architecture uses a separate object directory, so switching targets
-cannot reuse an incompatible GPU object. The CDNA binaries compile, but runtime
-bring-up and performance validation are still in progress. See the
+cannot reuse an incompatible GPU object. At startup, each binary reads HIP's
+`gcnArchName` and accepts only the architecture for which it was compiled.
+Runtime profiles distinguish RDNA WGP reporting from CDNA CU reporting, and
+host launches use the same geometry constants as the compiled kernels.
+
+End-to-end CDNA correctness and performance validation are still in progress.
+Current status is tracked in the
 [CDNA implementation plan](docs/CDNA_IMPLEMENTATION_PLAN.md) for current status.
 
 ### Build Configuration
@@ -287,7 +292,8 @@ For detailed technical information about the port, see:
 ## Known Limitations
 
 1. **CDNA bring-up:** `gfx942` and `gfx950` build targets are available, but
-   runtime correctness and performance validation are still in progress.
+   end-to-end correctness and performance validation are still in progress.
+   MI300X runtime validation requires access to an MI300X system.
 2. **Linux only:** ROCm primarily supports Linux. Windows support via WSL2 is experimental.
 3. **Single GPU:** Multi-GPU support exists but is untested on AMD.
 
@@ -321,4 +327,5 @@ This software is for educational and research purposes only. The author is not r
 - **RDNA 3 port status:** Existing `gfx1100` implementation
 - **CDNA port status:** Bring-up in progress
 - **Last updated:** September 28, 2026
-- **Tested on:** AMD Radeon RX 7900 XTX with ROCm 6.4.3
+- **RDNA 3 tested on:** AMD Radeon RX 7900 XTX with ROCm 6.4.3
+- **CDNA smoke-tested on:** AMD Instinct MI355X (`gfx950`) with ROCm 7.2
