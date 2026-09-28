@@ -1,14 +1,72 @@
-// RCKangaroo - AMD ROCm/HIP Port
-// Original: (c) 2024 RetiredCoder (RC) - https://github.com/RetiredC
-// License: GPLv3, see "LICENSE.TXT" file
-// AMD Port: (c) 2025 Sirius437
+////////////////////////////////////////////////////////////////////////////////
+// AMDKangaroo GPU Kernels - AMD ROCm/HIP Implementation
+//
+// Original CUDA implementation: (c) 2024 RetiredCoder (RC)
+//   https://github.com/RetiredC
+//
+// AMD ROCm/HIP Port: (c) 2025 Sirius437
+// CDNA 3/4 Optimization: (c) 2025
+//
+// License: GPLv3, see LICENSE.TXT
+//
+// ============================================================================
+// Algorithm Overview: Pollard's Kangaroo for ECDLP Solving
+// ============================================================================
+//
+// This implementation solves the Elliptic Curve Discrete Logarithm Problem
+// (ECDLP) using Pollard's Kangaroo algorithm on GPU.
+//
+// High-Level Algorithm:
+// 1. Initialize tame and wild kangaroo sequences
+// 2. Each kangaroo takes random jumps on the elliptic curve
+// 3. Record "distinguished points" (points with special property)
+// 4. When a collision is found between tame and wild kangaroos,
+//    the discrete logarithm can be computed from the jump distances
+//
+// GPU Implementation Strategy:
+// - Process many independent kangaroos in parallel
+// - Each thread handles multiple point groups (PNT_GROUP_CNT)
+// - Use Structure-of-Arrays (SoA) memory layout for coalesced access
+// - LDS (Local Data Store) caching for jump tables
+// - L2 cache exploitation (critical for CDNA 3/4)
+//
+// GPU Kernels:
+// - KernelA: Main kangaroo jumps (STEP_CNT iterations)
+// - KernelB: Loop detection and distance accumulation
+// - KernelC: Escape from small loops using third jump table
+// - KernelGen: Generate starting points for new kangaroos
+//
+// Memory Layout (Structure-of-Arrays):
+// Each kangaroo is stored as 11 u64 values across global memory:
+//   Limb 0-3:  X coordinate of elliptic curve point (256-bit)
+//   Limb 4-7:  Y coordinate of elliptic curve point (256-bit)
+//   Limb 8-10: Distance traveled (192-bit counter)
+//
+// For coalesced access, data is laid out in stride pattern:
+//   - All limb 0's together, then all limb 1's, etc.
+//   - CDNA 3/4 Wave64: Better L2 hit rate with this layout
+//
+// Architecture-Specific Notes:
+// - RDNA 3 (gfx1100): Wave32, 6MB L2, L2 misses are frequent
+// - CDNA 3 (gfx942): Wave64, 256MB L2, optimized for this algorithm
+// - CDNA 4 (gfx950): Wave64, 256MB L2, more CUs for parallelism
+//
+// Performance Critical Paths:
+// 1. Modular arithmetic (AddModP, MulModP, InvModP) - loops heavily
+// 2. L2 cache efficiency - 256MB L2 caches full working set on CDNA 3/4
+// 3. Memory coalescing - SoA layout ensures adjacent threads access adjacent memory
+// 4. Synchronization overhead - minimized by batch processing
+//
+// ============================================================================
 
 #include <hip/hip_runtime.h>
 
 #include "defs.h"
 #include "AMDGpuUtils.h"
 
-//imp2 table points for KernelA
+// GPU constant memory: Secondary jump table for loop escaping
+// Stored in constant cache (faster access than global memory)
+// Size: 8 * JMP_CNT * 8 bytes = 4096 * 64 bytes = 256KB per architecture
 __device__ __constant__ u64 jmp2_table[8 * JMP_CNT];
 
 
