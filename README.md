@@ -103,6 +103,10 @@ remain.
 AMD field multiplication and squaring fold carries beyond bit 255 and return a
 canonical value below the secp256k1 prime. The square accumulator also reserves
 an explicit carry limb so valid high-valued inputs cannot corrupt local state.
+KernelB keeps an independent `MD_LEN`-entry distance history for every
+block, point group, and thread lane. Its loads and stores now use
+`threadIdx.x` for the innermost lane index, preventing all threads in a block
+from accidentally sharing one lane's history.
 
 End-to-end CDNA correctness and performance validation are still in progress.
 Current status is tracked in the

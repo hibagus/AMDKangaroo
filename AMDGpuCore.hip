@@ -552,7 +552,10 @@ __device__ __forceinline__ bool ProcessJumpDistance(u32 step_ind, u32 d_cur, u64
 	//calc index in LastPnts
 	u32 ind_LastPnts = MD_LEN - 1 - ((STEP_CNT - 1 - step_ind) % LoopSize);
 	u32 ind = atomicAdd(Kparams.LoopedKangs, 1);
-	Kparams.LoopedKangs[2 + ind] = kang_ind | (ind_LastPnts << 28);
+	// Keep the point-history slot alongside the kangaroo index so KernelC can
+	// resume from the exact point that preceded the detected cycle.
+	Kparams.LoopedKangs[2 + ind] = (kang_ind & LOOPED_KANG_INDEX_MASK)
+		| (ind_LastPnts << LOOPED_KANG_HISTORY_SHIFT);
 	return true;
 }
 
@@ -601,14 +604,25 @@ __global__ void KernelB(const TKparams Kparams)
 
 	u64 RegsA[MD_LEN], RegsB[MD_LEN];
 
+	// LoopTable is [block][group][history slot][thread]. Keeping THREAD_X as
+	// the innermost dimension gives each lane private history while preserving
+	// coalesced loads and stores across the wave.
+	const u64 loopBlockStride = static_cast<u64>(PNT_GROUP_CNT) * MD_LEN * BLOCK_SIZE;
+	const u64 loopGroupStride = static_cast<u64>(MD_LEN) * BLOCK_SIZE;
+
 	//we process two kangs at once
 	for (u32 gr_ind2 = 0; gr_ind2 < PNT_GROUP_CNT/2; gr_ind2++)
-	{	
+	{
+		u64* loopHistoryA = Kparams.LoopTable
+			+ static_cast<u64>(BLOCK_X) * loopBlockStride
+			+ (2 * gr_ind2) * loopGroupStride;
+		u64* loopHistoryB = loopHistoryA + loopGroupStride;
+
 		#pragma unroll
 		for (int i = 0; i < MD_LEN; i++)
 		{
-			RegsA[i] = Kparams.LoopTable[MD_LEN * BLOCK_SIZE * PNT_GROUP_CNT * BLOCK_X + 2 * MD_LEN * BLOCK_SIZE * gr_ind2 + i * BLOCK_SIZE + BLOCK_X];
-			RegsB[i] = Kparams.LoopTable[MD_LEN * BLOCK_SIZE * PNT_GROUP_CNT * BLOCK_X + 2 * MD_LEN * BLOCK_SIZE * gr_ind2 + (i + MD_LEN) * BLOCK_SIZE + BLOCK_X];
+			RegsA[i] = loopHistoryA[i * BLOCK_SIZE + THREAD_X];
+			RegsB[i] = loopHistoryB[i * BLOCK_SIZE + THREAD_X];
 		}
 		u32 cur_indA = 0;
 		u32 cur_indB = 0;
@@ -663,9 +677,9 @@ __global__ void KernelB(const TKparams Kparams)
 		for (int i = 0; i < MD_LEN; i++)
 		{
 			int ind = (i + MD_LEN - cur_indA) % MD_LEN;
-			Kparams.LoopTable[MD_LEN * BLOCK_SIZE * PNT_GROUP_CNT * BLOCK_X + 2 * MD_LEN * BLOCK_SIZE * gr_ind2 + ind * BLOCK_SIZE + BLOCK_X] = RegsA[i];
+			loopHistoryA[ind * BLOCK_SIZE + THREAD_X] = RegsA[i];
 			ind = (i + MD_LEN - cur_indB) % MD_LEN;
-			Kparams.LoopTable[MD_LEN * BLOCK_SIZE * PNT_GROUP_CNT * BLOCK_X + 2 * MD_LEN * BLOCK_SIZE * gr_ind2 + (ind + MD_LEN) * BLOCK_SIZE + BLOCK_X] = RegsB[i];
+			loopHistoryB[ind * BLOCK_SIZE + THREAD_X] = RegsB[i];
 		}
 	}
 }
@@ -695,8 +709,9 @@ __global__ void KernelC(const TKparams Kparams)
 		u32 ind = atomicAdd(Kparams.LoopedKangs + 1, 1);
 		if (ind >= Kparams.LoopedKangs[0])
 			break;
-		u32 kang_ind = Kparams.LoopedKangs[2 + ind] & 0x0FFFFFFF;
-		u32 last_ind = Kparams.LoopedKangs[2 + ind] >> 28;
+		u32 packedLoop = Kparams.LoopedKangs[2 + ind];
+		u32 kang_ind = packedLoop & LOOPED_KANG_INDEX_MASK;
+		u32 last_ind = packedLoop >> LOOPED_KANG_HISTORY_SHIFT;
 
 		__align__(16) u64 x0[4], x[4];
 		__align__(16) u64 y0[4], y[4];

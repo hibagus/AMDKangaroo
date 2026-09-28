@@ -43,10 +43,13 @@ Completed bring-up work:
 - A deterministic GPU harness validates 1,409 negate, add, subtract, multiply,
   square, and inverse cases against an independent host reference. All cases
   pass on MI355X; the MI300X test binary is compile-validated.
+- `KernelB` now indexes every loop-history load and store by the current
+  thread lane, matching the upstream CUDA implementation.
+- GPU state-buffer comments document dimensions, strides, packed fields, and
+  producer/consumer ownership.
 
 Remaining issues that must be resolved before performance can be trusted:
 
-- `KernelB` uses the block index for four per-thread loop-history accesses.
 - Forced LLVM inlining and unrolling make `KernelA` use 512 VGPRs and 948 bytes
   of scratch per thread on both targets. Plain `-O3` produces 202 VGPRs with no
   scratch for the same source.
@@ -216,7 +219,7 @@ logical commit:
 3. [x] `runtime: fail fast on HIP API and kernel errors`
 4. [x] `fix: canonicalize AMD multiplication and square reductions`
 5. [x] `test: add deterministic GPU field arithmetic validation`
-6. `fix: repair kernel history indexing and document layouts`
+6. [x] `fix: repair kernel history indexing and document layouts`
 7. `test: validate kangaroo state and known puzzle solutions`
 8. `benchmark: add reproducible per-kernel performance reporting`
 9. `perf: remove spill-inducing compiler overrides`
