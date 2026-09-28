@@ -412,9 +412,14 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 		printf("Unsupported Range value (%d)!\r\n", Range);
 		return false;
 	}
-	if ((DP < 14) || (DP > 60)) 
+	// DP validation: maximum DP depends on range
+	// For efficient collision: need 2^(Range - DP) >> 2^(Range/2)
+	// This means: DP should be significantly less than Range/2
+	// Allow DP <= Range/2 + 3 for practical cases
+	int maxDP = Range / 2 + 3;
+	if ((DP < 8) || (DP > maxDP))
 	{
-		printf("Unsupported DP value (%d)!\r\n", DP);
+		printf("Unsupported DP value (%d)! Range %d bits requires DP between 8 and %d\r\n", DP, Range, maxDP);
 		return false;
 	}
 
@@ -632,9 +637,10 @@ bool ParseCommandLine(int argc, char* argv[])
 		{
 			int val = atoi(argv[ci]);
 			ci++;
-			if ((val < 14) || (val > 60))
+			// Basic DP range check (detailed validation with range happens in SolvePoint)
+			if ((val < 8) || (val > 60))
 			{
-				printf("error: invalid value for -dp option\r\n");
+				printf("error: invalid value for -dp option (must be 8-60)\r\n");
 				return false;
 			}
 			gDP = val;
