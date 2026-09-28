@@ -9,12 +9,15 @@
 
 namespace
 {
-// All supported targets currently share the conservative bring-up geometry.
-// Later measured tuning commits can split these values by architecture.
+// Each specialized binary receives its validated or experimental geometry from
+// the Makefile. Runtime lookup keeps that geometry tied to the matching target.
 const AMDGpuProfile SupportedProfiles[] = {
-	{AMDGpuArchitecture::Gfx1100, "gfx1100", "WGPs", 2, BLOCK_SIZE, PNT_GROUP_CNT, true},
-	{AMDGpuArchitecture::Gfx942, "gfx942", "CUs", 1, BLOCK_SIZE, PNT_GROUP_CNT, true},
-	{AMDGpuArchitecture::Gfx950, "gfx950", "CUs", 1, BLOCK_SIZE, PNT_GROUP_CNT, true},
+	{AMDGpuArchitecture::Gfx1100, "gfx1100", "WGPs", 2,
+		BLOCK_SIZE, PNT_GROUP_CNT, AMDK_GRID_MULTIPLIER, true},
+	{AMDGpuArchitecture::Gfx942, "gfx942", "CUs", 1,
+		BLOCK_SIZE, PNT_GROUP_CNT, AMDK_GRID_MULTIPLIER, true},
+	{AMDGpuArchitecture::Gfx950, "gfx950", "CUs", 1,
+		BLOCK_SIZE, PNT_GROUP_CNT, AMDK_GRID_MULTIPLIER, true},
 };
 
 bool MatchesBaseArchitecture(const char* reportedName, const char* profileName)

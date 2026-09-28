@@ -48,7 +48,7 @@ Completed bring-up work:
 - GPU state-buffer comments document dimensions, strides, packed fields, and
   producer/consumer ownership.
 - A deterministic state harness runs the production point-generation, jump, and
-  distance/history kernels one jump per launch. On MI355X, 16 samples spanning
+  distance/history kernels one jump per launch. On MI355X, 17 samples spanning
   lane, wave, and group boundaries match the CPU curve reference after 1, 2,
   10, and 100 jumps, including independent first-step loop histories.
 - A bounded end-to-end MI355X regression solves the documented 32-bit puzzle
@@ -66,6 +66,11 @@ Completed bring-up work:
 - The identical MI355X seeded benchmark changed from 4.35583 to 4.36201
   effective GJumps/s, which is within normal noise. This is recorded as
   resource headroom for later occupancy tuning, not as a claimed speedup.
+- Block size, point-group count, and grid multiplier are explicit validated
+  Make variables. Their values are embedded in each object-directory name so
+  tuning sweeps cannot silently reuse code compiled for another geometry.
+- A non-default 128-thread, 16-group, two-blocks-per-CU MI355X profile passed
+  the geometry-derived state checkpoints and a deterministic benchmark launch.
 
 Remaining issues that must be resolved before performance can be trusted:
 
@@ -239,13 +244,14 @@ logical commit:
 7. [x] `test: validate kangaroo state and known puzzle solutions`
 8. [x] `benchmark: add reproducible per-kernel performance reporting`
 9. [x] `perf: remove spill-inducing compiler overrides`
-10. `perf(gfx942): tune launch geometry and LDS occupancy`
-11. `perf(gfx950): tune launch geometry and LDS occupancy`
-12. `perf: optimize secp256k1 field arithmetic`
-13. `perf: reduce jump-table and loop-processing overhead`
-14. `perf: overlap transfers and host DP processing`
-15. `perf: improve multi-GPU host scaling`
-16. `docs: publish validated MI300X and MI355X results`
+10. [x] `build: add isolated launch-geometry tuning profiles`
+11. `perf(gfx942): tune launch geometry and LDS occupancy`
+12. `perf(gfx950): tune launch geometry and LDS occupancy`
+13. `perf: optimize secp256k1 field arithmetic`
+14. `perf: reduce jump-table and loop-processing overhead`
+15. `perf: overlap transfers and host DP processing`
+16. `perf: improve multi-GPU host scaling`
+17. `docs: publish validated MI300X and MI355X results`
 
 Tests and directly related README updates belong in the same logical commit as
 the behavior they validate or document. Independent test infrastructure or

@@ -51,7 +51,9 @@ void FreeGpuAllocation(AMDGpuKang& gpu, T*& allocation, const char* operation)
 
 void ConfigureLaunchGeometry(TKparams& params, const AMDGpuProfile& profile, int processorCount)
 {
-	params.BlockCnt = processorCount;
+	// More than one workgroup per processor can hide latency on CDNA, but it
+	// also scales persistent state and temporary memory by the same multiplier.
+	params.BlockCnt = processorCount * profile.GridMultiplier;
 	params.BlockSize = profile.BlockSize;
 	params.GroupCnt = profile.PointGroupCount;
 }
@@ -213,7 +215,7 @@ bool AMDGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJum
 	if (!CheckHip(*this, err, "hipMalloc(DPTable)"))
 		return false;
 
-	size = ProcessorCount * Kparams.BlockSize * sizeof(u64);
+	size = Kparams.BlockCnt * Kparams.BlockSize * sizeof(u64);
 	total_mem += size;
 	err = hipMalloc((void**)&Kparams.L1S2, size);
 	if (!CheckHip(*this, err, "hipMalloc(L1S2)"))
@@ -427,7 +429,7 @@ bool AMDGpuKang::Start()
 	if (!CheckHip(*this, err, failedOperation))
 		return false;
 
-	err = hipMemset(Kparams.L1S2, 0, ProcessorCount * Kparams.BlockSize * 8);
+	err = hipMemset(Kparams.L1S2, 0, Kparams.BlockCnt * Kparams.BlockSize * 8);
 	if (!CheckHip(*this, err, "hipMemset(loop flags)"))
 		return false;
 	err = hipMemset(Kparams.dbg_buf, 0, 1024);
@@ -442,7 +444,7 @@ bool AMDGpuKang::Start()
 #ifdef DEBUG_MODE
 int AMDGpuKang::Dbg_CheckKangs()
 {
-	int kang_size = ProcessorCount * Kparams.BlockSize * Kparams.GroupCnt * 96;
+	int kang_size = KangCnt * 96;
 	u64* kangs = (u64*)malloc(kang_size);
 	hipError_t err = hipMemcpy(kangs, Kparams.Kangs, kang_size, hipMemcpyDeviceToHost);
 	if (!CheckHip(*this, err, "hipMemcpy(debug kangaroo state to host)"))

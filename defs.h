@@ -45,11 +45,19 @@ typedef char i8;
 		#define PNT_GROUP_CNT		24
 	#endif
 #elif defined(__HIP_PLATFORM_AMD__)
-	// Conservative shared geometry for gfx1100, gfx942, and gfx950 bring-up.
-	// Architecture-specific values will be introduced only after correctness tests
-	// and occupancy measurements justify them.
-	#define BLOCK_SIZE			256
-	#define PNT_GROUP_CNT		24
+	// The Makefile supplies explicit values for benchmark sweeps. Fallbacks keep
+	// direct compiler invocations compatible with the validated baseline.
+	#ifndef AMDK_BLOCK_SIZE
+		#define AMDK_BLOCK_SIZE			256
+	#endif
+	#ifndef AMDK_POINT_GROUP_COUNT
+		#define AMDK_POINT_GROUP_COUNT	24
+	#endif
+	#ifndef AMDK_GRID_MULTIPLIER
+		#define AMDK_GRID_MULTIPLIER		1
+	#endif
+	#define BLOCK_SIZE			AMDK_BLOCK_SIZE
+	#define PNT_GROUP_CNT		AMDK_POINT_GROUP_COUNT
 #else //CPU, fake values
 	#define BLOCK_SIZE			512
 	#define PNT_GROUP_CNT		64

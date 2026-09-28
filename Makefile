@@ -7,8 +7,14 @@ ROCM_PATH ?= /opt/rocm
 # from reusing a code object compiled for a different GPU after GPU_ARCH changes.
 SUPPORTED_GPU_ARCHS := gfx1100 gfx942 gfx950
 GPU_ARCH ?= gfx950
+GPU_BLOCK_SIZE ?= 256
+GPU_POINT_GROUP_COUNT ?= 24
+GPU_GRID_MULTIPLIER ?= 1
 BUILD_ROOT := build
-BUILD_DIR := $(BUILD_ROOT)/$(GPU_ARCH)
+# Include every compile-time tuning value in the object path. Benchmark sweeps
+# can then switch configurations without accidentally linking stale objects.
+TUNING_TAG := b$(GPU_BLOCK_SIZE)-g$(GPU_POINT_GROUP_COUNT)-x$(GPU_GRID_MULTIPLIER)
+BUILD_DIR := $(BUILD_ROOT)/$(GPU_ARCH)/$(TUNING_TAG)
 # Keep the historical executable name for a default or GPU_ARCH-selected build.
 # Explicit architecture targets below use names that can coexist.
 TARGET ?= amdkangaroo
@@ -16,6 +22,21 @@ TARGET ?= amdkangaroo
 ifeq ($(filter $(GPU_ARCH),$(SUPPORTED_GPU_ARCHS)),)
 $(error Unsupported GPU_ARCH '$(GPU_ARCH)'; choose one of: $(SUPPORTED_GPU_ARCHS))
 endif
+ifeq ($(filter $(GPU_BLOCK_SIZE),128 256 512),)
+$(error Unsupported GPU_BLOCK_SIZE '$(GPU_BLOCK_SIZE)'; choose one of: 128 256 512)
+endif
+# Jump descriptors are packed in groups of eight, so point-group counts must be
+# multiples of eight until that layout is generalized.
+ifeq ($(filter $(GPU_POINT_GROUP_COUNT),8 16 24 32),)
+$(error Unsupported GPU_POINT_GROUP_COUNT '$(GPU_POINT_GROUP_COUNT)'; choose one of: 8 16 24 32)
+endif
+ifeq ($(filter $(GPU_GRID_MULTIPLIER),1 2 3 4),)
+$(error Unsupported GPU_GRID_MULTIPLIER '$(GPU_GRID_MULTIPLIER)'; choose one of: 1 2 3 4)
+endif
+
+TUNING_CPPFLAGS := -DAMDK_BLOCK_SIZE=$(GPU_BLOCK_SIZE) \
+                   -DAMDK_POINT_GROUP_COUNT=$(GPU_POINT_GROUP_COUNT) \
+                   -DAMDK_GRID_MULTIPLIER=$(GPU_GRID_MULTIPLIER)
 
 # Enable ASM primitives (comment out to disable)
 USE_ASM_PRIMITIVES := 1
@@ -47,8 +68,8 @@ endif
 GPU_ARCH_FLAG := --offload-arch=$(GPU_ARCH)
 # Record the code-object target in host code for an early runtime compatibility check.
 GPU_ARCH_CPPFLAG := -DAMDK_TARGET_ARCH=\"$(GPU_ARCH)\"
-CCFLAGS += $(GPU_ARCH_CPPFLAG)
-HIPCCFLAGS := -O3 $(GPU_ARCH_FLAG) $(GPU_ARCH_CPPFLAG) -fgpu-rdc -D__HIP_PLATFORM_AMD__ \
+CCFLAGS += $(GPU_ARCH_CPPFLAG) $(TUNING_CPPFLAGS)
+HIPCCFLAGS := -O3 $(GPU_ARCH_FLAG) $(GPU_ARCH_CPPFLAG) $(TUNING_CPPFLAGS) -fgpu-rdc -D__HIP_PLATFORM_AMD__ \
               -ffast-math -munsafe-fp-atomics \
               -Rpass-analysis=kernel-resource-usage
 
@@ -150,7 +171,8 @@ test-known-puzzle-gfx942 test-known-puzzle-gfx950:
 # Print final linked kernel resources as CSV. Unlike compiler remarks, this
 # includes spill counts and code sizes from the executable's code object.
 kernel-resources: $(TARGET)
-	tools/report_kernel_resources.sh ./$(TARGET) $(GPU_ARCH)
+	tools/report_kernel_resources.sh ./$(TARGET) $(GPU_ARCH) $(GPU_BLOCK_SIZE) \
+		$(GPU_POINT_GROUP_COUNT) $(GPU_GRID_MULTIPLIER)
 
 kernel-resources-gfx942 kernel-resources-gfx950:
 	$(MAKE) GPU_ARCH=$(patsubst kernel-resources-%,%,$@) \

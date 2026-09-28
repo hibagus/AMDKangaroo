@@ -194,17 +194,24 @@ std::vector<StateSample> BuildSamples()
 	std::vector<StateSample> samples;
 	const std::array<u32, 9> boundaryLanes = {0, 1, 31, 32, 63, 64, 127, 128, 255};
 	for (size_t index = 0; index < boundaryLanes.size(); index++)
-		AddSample(samples, 0, boundaryLanes[index], (index & 1) != 0);
+		if (boundaryLanes[index] < BLOCK_SIZE)
+			AddSample(samples, 0, boundaryLanes[index], (index & 1) != 0);
 
-	// Middle and final point-group pairs catch errors that only appear after a
-	// wave-interleaving or group-stride boundary.
-	AddSample(samples, 5, 0, false);
-	AddSample(samples, 5, 31, true);
-	AddSample(samples, 5, 128, false);
-	AddSample(samples, 5, 255, true);
-	AddSample(samples, 11, 0, true);
-	AddSample(samples, 11, 127, false);
-	AddSample(samples, 11, 255, true);
+	// Derive middle and final pairs from the compiled group count. Fixed pair
+	// numbers would read beyond smaller tuning profiles and hide real failures
+	// behind invalid test samples.
+	const u32 pairCount = PNT_GROUP_CNT / 2;
+	const std::array<u32, 2> boundaryPairs = {
+		pairCount / 2, pairCount - 1
+	};
+	const std::array<u32, 4> representativeLanes = {
+		0, std::min<u32>(31, BLOCK_SIZE - 1),
+		std::min<u32>(128, BLOCK_SIZE - 1), BLOCK_SIZE - 1
+	};
+	for (u32 pair : boundaryPairs)
+		for (size_t index = 0; index < representativeLanes.size(); index++)
+			AddSample(samples, pair, representativeLanes[index],
+				(index & 1) != 0);
 	return samples;
 }
 

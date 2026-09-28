@@ -2,13 +2,23 @@
 
 set -eu
 
-if [ "$#" -ne 2 ]; then
-	echo "Usage: $0 SOLVER GPU_ARCH" >&2
+if [ "$#" -ne 5 ]; then
+	echo "Usage: $0 SOLVER GPU_ARCH BLOCK_SIZE POINT_GROUPS GRID_MULTIPLIER" >&2
 	exit 2
 fi
 
 solver=$(realpath "$1")
 gpu_arch=$2
+block_size=$3
+point_group_count=$4
+grid_multiplier=$5
+for value in "$block_size" "$point_group_count" "$grid_multiplier"; do
+	case "$value" in
+		''|*[!0-9]*|0)
+			echo "Geometry values must be positive integers" >&2
+			exit 2 ;;
+	esac
+done
 rocm_path=${ROCM_PATH:-/opt/rocm}
 objcopy="$rocm_path/llvm/bin/llvm-objcopy"
 bundler="$rocm_path/llvm/bin/clang-offload-bundler"
@@ -57,16 +67,14 @@ set -- "$@" "--input=$fat_binary" "--output=$code_object"
 # Dynamic LDS is selected by the host at launch and is therefore absent from
 # the code-object's fixed-LDS field. Derive it from the same compile-time
 # constants used by the production host and device code.
-block_size=$(g++ -E -dM -x c++ -D__HIP_PLATFORM_AMD__ defs.h |
-	awk '$2 == "BLOCK_SIZE" { print $3 }')
 jump_count=$(g++ -E -dM -x c++ -D__HIP_PLATFORM_AMD__ defs.h |
 	awk '$2 == "JMP_CNT" { print $3 }')
 kernel_a_lds=$((64 * jump_count + 16 * block_size))
 kernel_b_lds=$((64 * jump_count))
 kernel_c_lds=$((96 * jump_count))
 
-echo "architecture,kernel,vgpr,agpr,sgpr,vgpr_spills,sgpr_spills,scratch_bytes_per_thread,fixed_lds_bytes,dynamic_lds_bytes,wave_size,code_size_bytes"
-awk -v architecture="$gpu_arch" -v kernel_a_lds="$kernel_a_lds" -v kernel_b_lds="$kernel_b_lds" -v kernel_c_lds="$kernel_c_lds" '
+echo "architecture,block_size,point_groups,grid_multiplier,kernel,vgpr,agpr,sgpr,vgpr_spills,sgpr_spills,scratch_bytes_per_thread,fixed_lds_bytes,dynamic_lds_bytes,wave_size,code_size_bytes"
+awk -v architecture="$gpu_arch" -v block_size="$block_size" -v point_group_count="$point_group_count" -v grid_multiplier="$grid_multiplier" -v kernel_a_lds="$kernel_a_lds" -v kernel_b_lds="$kernel_b_lds" -v kernel_c_lds="$kernel_c_lds" '
 	NR == FNR {
 		split($0, symbol, ",")
 		code_size[symbol[1]] = symbol[2]
@@ -110,6 +118,6 @@ awk -v architecture="$gpu_arch" -v kernel_a_lds="$kernel_a_lds" -v kernel_b_lds=
 			dynamic_lds = kernel_c_lds
 		else
 			dynamic_lds = 0
-		print architecture "," name "," vgpr "," agpr "," sgpr "," vgpr_spills "," sgpr_spills "," private_bytes "," fixed_lds "," dynamic_lds "," wave "," code_size[name]
+		print architecture "," block_size "," point_group_count "," grid_multiplier "," name "," vgpr "," agpr "," sgpr "," vgpr_spills "," sgpr_spills "," private_bytes "," fixed_lds "," dynamic_lds "," wave "," code_size[name]
 	}
 ' "$symbol_sizes" "$metadata"

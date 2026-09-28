@@ -100,6 +100,20 @@ host launches use the same geometry constants as the compiled kernels.
 Fatal HIP errors identify the device and failed operation, stop the affected
 worker after its first error, and terminate the solve cleanly if no GPU workers
 remain.
+
+Launch geometry can be overridden for controlled benchmark sweeps:
+
+```sh
+make GPU_ARCH=gfx950 GPU_BLOCK_SIZE=256 GPU_POINT_GROUP_COUNT=24 GPU_GRID_MULTIPLIER=1 TARGET=amdkangaroo-gfx950-tuned
+```
+
+Supported block sizes are 128, 256, and 512 threads; point-group counts are 8,
+16, 24, and 32; and grid multipliers are 1 through 4. Point groups remain
+multiples of eight because jump descriptors are packed eight at a time.
+Object directories include all three values, so switching configurations
+cannot reuse incompatible objects. A grid multiplier scales both workgroups
+and allocated kangaroo state; check available memory before large sweeps.
+
 AMD field multiplication and squaring fold carries beyond bit 255 and return a
 canonical value below the secp256k1 prime. The square accumulator also reserves
 an explicit carry limb so valid high-valued inputs cannot corrupt local state.
@@ -165,7 +179,7 @@ make test-state-gfx950 STATE_TEST_GPU=0
 make test-state-gfx942 STATE_TEST_GPU=0
 ```
 
-The MI355X test passes all four checkpoints for 16 sampled kangaroos. The
+The default MI355X test passes all four checkpoints for 17 sampled kangaroos. The
 `gfx942` binary compiles successfully, but runtime validation still requires
 MI300X hardware.
 

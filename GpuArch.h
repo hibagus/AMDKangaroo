@@ -16,6 +16,7 @@ struct AMDGpuProfile
 	int ComputeUnitsPerProcessor;
 	int BlockSize;
 	int PointGroupCount;
+	int GridMultiplier;
 	bool UsesL2Workspace;
 };
 
