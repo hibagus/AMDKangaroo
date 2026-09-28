@@ -7,9 +7,22 @@ ROCM_PATH ?= /opt/rocm
 # from reusing a code object compiled for a different GPU after GPU_ARCH changes.
 SUPPORTED_GPU_ARCHS := gfx1100 gfx942 gfx950
 GPU_ARCH ?= gfx950
-GPU_BLOCK_SIZE ?= 256
-GPU_POINT_GROUP_COUNT ?= 24
-GPU_GRID_MULTIPLIER ?= 1
+
+# MI355X measurements favor more independent state and the largest supported
+# point batch. Keep MI300X and RDNA defaults conservative until measured on
+# their actual hardware; every value remains explicitly overridable.
+ifeq ($(GPU_ARCH),gfx950)
+DEFAULT_GPU_BLOCK_SIZE := 256
+DEFAULT_GPU_POINT_GROUP_COUNT := 32
+DEFAULT_GPU_GRID_MULTIPLIER := 4
+else
+DEFAULT_GPU_BLOCK_SIZE := 256
+DEFAULT_GPU_POINT_GROUP_COUNT := 24
+DEFAULT_GPU_GRID_MULTIPLIER := 1
+endif
+GPU_BLOCK_SIZE ?= $(DEFAULT_GPU_BLOCK_SIZE)
+GPU_POINT_GROUP_COUNT ?= $(DEFAULT_GPU_POINT_GROUP_COUNT)
+GPU_GRID_MULTIPLIER ?= $(DEFAULT_GPU_GRID_MULTIPLIER)
 BUILD_ROOT := build
 # Include every compile-time tuning value in the object path. Benchmark sweeps
 # can then switch configurations without accidentally linking stale objects.

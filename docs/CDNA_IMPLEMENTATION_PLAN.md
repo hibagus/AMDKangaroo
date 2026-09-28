@@ -61,8 +61,9 @@ Completed bring-up work:
 - A linked-code-object report records VGPR, AGPR, SGPR, spill, scratch, LDS,
   wave-size, and code-size data for each production kernel on either target.
 - Removing forced early-inlining and oversized inline/unroll thresholds reduced
-  KernelA from 512 to 208 VGPRs, 240 to zero VGPR spills, 964 to zero scratch
-  bytes per thread, and 63,780 to 49,752 code bytes on both CDNA targets.
+  baseline KernelA from 512 to 208 VGPRs, 240 to zero VGPR spills, 964 to zero
+  scratch bytes per thread, and 63,780 to 49,752 code bytes on both CDNA
+  targets.
 - The identical MI355X seeded benchmark changed from 4.35583 to 4.36201
   effective GJumps/s, which is within normal noise. This is recorded as
   resource headroom for later occupancy tuning, not as a claimed speedup.
@@ -71,6 +72,14 @@ Completed bring-up work:
   tuning sweeps cannot silently reuse code compiled for another geometry.
 - A non-default 128-thread, 16-group, two-blocks-per-CU MI355X profile passed
   the geometry-derived state checkpoints and a deterministic benchmark launch.
+- The measured MI355X default is 256 threads, 32 point groups, and four
+  workgroups per visible CU. On a full 256-CU MI355X it uses 8,388,608
+  kangaroos and about 25,422 MB.
+- With identical 3-warm-up/9-timed settings, this profile improved median
+  effective throughput from 4.36201 to 7.06036 GJumps/s (+61.86%) over the
+  original 256-thread, 24-group, one-block-per-CU profile.
+- Its final KernelA uses 212 VGPRs, zero spills, zero scratch bytes per thread,
+  36,864 bytes of dynamic LDS, and 49,124 code bytes.
 
 Remaining issues that must be resolved before performance can be trusted:
 
@@ -246,7 +255,7 @@ logical commit:
 9. [x] `perf: remove spill-inducing compiler overrides`
 10. [x] `build: add isolated launch-geometry tuning profiles`
 11. `perf(gfx942): tune launch geometry and LDS occupancy`
-12. `perf(gfx950): tune launch geometry and LDS occupancy`
+12. [x] `perf(gfx950): tune launch geometry and LDS occupancy`
 13. `perf: optimize secp256k1 field arithmetic`
 14. `perf: reduce jump-table and loop-processing overhead`
 15. `perf: overlap transfers and host DP processing`

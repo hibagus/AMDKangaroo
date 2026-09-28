@@ -246,10 +246,10 @@ The report is CSV on standard output, so it can be redirected to an experiment
 artifact. Resource counts alone are not a performance result; retain the
 benchmark CSV and correctness-test results with every optimization comparison.
 
-The current ROCm 7.2 CDNA builds let the AMD backend choose inlining and
-unrolling instead of forcing very large LLVM thresholds. For KernelA on both
-`gfx942` and `gfx950`, that change reduced the final linked resources as
-follows:
+At the shared 256-thread, 24-group, one-block baseline, the ROCm 7.2 CDNA
+builds let the AMD backend choose inlining and unrolling instead of forcing
+very large LLVM thresholds. For KernelA on both `gfx942` and `gfx950`, that
+change reduced the final linked resources as follows:
 
 - VGPRs: 512 to 208
 - VGPR spills: 240 to 0
@@ -261,6 +261,30 @@ effective throughput from 4.35583 to 4.36201 GJumps/s (about 0.14%). That is
 within normal run-to-run noise, so it is not claimed as a speedup. The change
 removes scratch traffic and creates register headroom for later occupancy and
 launch-geometry tuning without regressing the measured baseline.
+
+### MI355X Tuned Default
+
+The specialized `gfx950` build now defaults to 256 threads, 32 point groups,
+and four workgroups per visible CU. The `gfx942` and `gfx1100` defaults
+remain at 256 threads, 24 groups, and one workgroup per reported processor until
+they can be measured on their own hardware.
+
+ROCm 7.2 measurements on a full 256-CU MI355X, using the same range, DP bits,
+seed, three warm-ups, and nine timed iterations, were:
+
+| gfx950 profile | Blocks | Kangaroos | GPU allocation | Effective rate |
+| --- | ---: | ---: | ---: | ---: |
+| 256 threads, 24 groups, 1x | 256 | 1,572,864 | 4,776 MB | 4.36201 GJumps/s |
+| 256 threads, 32 groups, 4x | 1,024 | 8,388,608 | 25,422 MB | 7.06036 GJumps/s |
+
+The selected profile's final KernelA uses 212 VGPRs, no register spills, no
+scratch memory, 36,864 bytes of dynamic LDS, and 49,124 bytes of code.
+
+The selected profile improved median effective throughput by 61.86%. Its larger
+state is intentional and fits comfortably on MI355X, but it increases GPU
+memory use and iteration latency. Partitioned devices scale the block count
+from HIP's visible processor count. Operators who prefer a smaller memory
+footprint can override the three Make variables documented above.
 
 ## Usage
 
