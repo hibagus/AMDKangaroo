@@ -260,6 +260,7 @@ GPU: -O3 --offload-arch=gfx1100 -ffast-math -munsafe-fp-atomics
 ## Technical Documentation
 
 For detailed technical information about the port, see:
+- [MI300X and MI355X implementation plan](docs/CDNA_IMPLEMENTATION_PLAN.md)
 - Original project: https://github.com/RetiredC
 - AMD ROCm documentation: https://rocm.docs.amd.com/
 - HIP programming guide: https://rocm.docs.amd.com/projects/HIP/
