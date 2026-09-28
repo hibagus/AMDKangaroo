@@ -374,6 +374,44 @@ __device__ __forceinline__ void AddModP(u64* res, u64* val1, u64* val2)
 		Copy_u64_x4(res, tmp);
 }
 
+__device__ __forceinline__ void NormalizeModP(u64* res, u32 overflow)
+{
+	u64 __carry = 0;
+
+	// A carry past bit 255 represents 2^256, which is 0x1000003D1
+	// modulo the secp256k1 prime. Fold it back before comparing with p.
+	if (overflow)
+	{
+		add_cc_64(res[0], res[0], 0x1000003D1ull);
+		addc_cc_64(res[1], res[1], 0ull);
+		addc_cc_64(res[2], res[2], 0ull);
+		addc_cc_64(res[3], res[3], 0ull);
+		addc_32(overflow, 0, 0);
+
+		// If the first fold wraps, its result is smaller than 0x1000003D1,
+		// so a second fold cannot overflow again.
+		if (overflow)
+		{
+			add_cc_64(res[0], res[0], 0x1000003D1ull);
+			addc_cc_64(res[1], res[1], 0ull);
+			addc_cc_64(res[2], res[2], 0ull);
+			addc_64(res[3], res[3], 0ull);
+		}
+	}
+
+	// MulModP's fast reduction can leave a mathematically correct value in
+	// [p, 2^256). Since p's upper three limbs are all UINT64_MAX, that range
+	// exists only when those limbs are all UINT64_MAX. This direct test avoids
+	// a four-limb temporary and general subtraction in this hot path.
+	if (res[3] == P_123 && res[2] == P_123 && res[1] == P_123 && res[0] >= P_0)
+	{
+		res[0] -= P_0;
+		res[1] = 0;
+		res[2] = 0;
+		res[3] = 0;
+	}
+}
+
 __device__ __forceinline__ void add_320_to_256(u64* res, u64* val)
 {
 	u64 __carry = 0;
@@ -512,7 +550,10 @@ __device__ __forceinline__ void MulModP(u64 *res, u64 *val1, u64 *val2)
 	add_cc_64(res[0], buff[0], tmp2[0]);
 	addc_cc_64(res[1], buff[1], tmp2[1]);
 	addc_cc_64(res[2], buff[2], 0ull);
-	addc_64(res[3], buff[3], 0ull);
+	addc_cc_64(res[3], buff[3], 0ull);
+	u32 overflow;
+	addc_32(overflow, 0, 0);
+	NormalizeModP(res, overflow);
 }
 
 __device__ __forceinline__ void add_320_to_256s(u32* res, u64 _v1, u64 _v2, u64 _v3, u64 _v4, u64 _v5, u64 _v6, u64 _v7, u64 _v8)
@@ -551,7 +592,10 @@ __device__ __forceinline__ void add_320_to_256s(u32* res, u64 _v1, u64 _v2, u64 
 __device__ __forceinline__ void SqrModP(u64* res, u64* val)
 {
 	u64 __carry = 0;
-	u64 buff[8], tmp[5], tmp2[2], tmp3, mm;
+	// The final 320-bit accumulation writes carry word 16. The square itself
+	// occupies words 0..15, so keep one extra scratch limb to make that carry
+	// write valid even though reduction only consumes the first eight limbs.
+	u64 buff[9], tmp[5], tmp2[2], tmp3, mm;
 	u32* a = (u32*)val;
 	u64 mar[28];
 	u32* b32 = (u32*)buff;
@@ -633,7 +677,10 @@ __device__ __forceinline__ void SqrModP(u64* res, u64* val)
 	add_cc_64(res[0], buff[0], tmp2[0]);
 	addc_cc_64(res[1], buff[1], tmp2[1]);
 	addc_cc_64(res[2], buff[2], 0ull);
-	addc_64(res[3], buff[3], 0ull);
+	addc_cc_64(res[3], buff[3], 0ull);
+	u32 overflow;
+	addc_32(overflow, 0, 0);
+	NormalizeModP(res, overflow);
 }
 
 __device__ __forceinline__ void add_288(u32* res, u32* val1, u32* val2)

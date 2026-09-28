@@ -98,6 +98,9 @@ host launches use the same geometry constants as the compiled kernels.
 Fatal HIP errors identify the device and failed operation, stop the affected
 worker after its first error, and terminate the solve cleanly if no GPU workers
 remain.
+AMD field multiplication and squaring fold carries beyond bit 255 and return a
+canonical value below the secp256k1 prime. The square accumulator also reserves
+an explicit carry limb so valid high-valued inputs cannot corrupt local state.
 
 End-to-end CDNA correctness and performance validation are still in progress.
 Current status is tracked in the

@@ -37,6 +37,9 @@ Completed bring-up work:
 - MI355X completed a bounded kernel-launch smoke test without a HIP launch error.
 - Fatal HIP API and kernel errors report the failed operation, stop the affected
   worker after its first error, and end the solve cleanly when no workers remain.
+- AMD modular multiplication and squaring now fold final 256-bit carries,
+  canonicalize results below the secp256k1 prime, and give the square
+  accumulator a valid carry limb.
 
 Remaining issues that must be resolved before performance can be trusted:
 
@@ -208,18 +211,19 @@ logical commit:
 1. [x] `build: add gfx942 and gfx950 target profiles`
 2. [x] `runtime: detect CDNA devices from HIP architecture properties`
 3. [x] `runtime: fail fast on HIP API and kernel errors`
-4. `test: add deterministic GPU field arithmetic validation`
-5. `fix: repair kernel history indexing and document layouts`
-6. `test: validate kangaroo state and known puzzle solutions`
-7. `benchmark: add reproducible per-kernel performance reporting`
-8. `perf: remove spill-inducing compiler overrides`
-9. `perf(gfx942): tune launch geometry and LDS occupancy`
-10. `perf(gfx950): tune launch geometry and LDS occupancy`
-11. `perf: optimize secp256k1 field arithmetic`
-12. `perf: reduce jump-table and loop-processing overhead`
-13. `perf: overlap transfers and host DP processing`
-14. `perf: improve multi-GPU host scaling`
-15. `docs: publish validated MI300X and MI355X results`
+4. [x] `fix: canonicalize AMD multiplication and square reductions`
+5. `test: add deterministic GPU field arithmetic validation`
+6. `fix: repair kernel history indexing and document layouts`
+7. `test: validate kangaroo state and known puzzle solutions`
+8. `benchmark: add reproducible per-kernel performance reporting`
+9. `perf: remove spill-inducing compiler overrides`
+10. `perf(gfx942): tune launch geometry and LDS occupancy`
+11. `perf(gfx950): tune launch geometry and LDS occupancy`
+12. `perf: optimize secp256k1 field arithmetic`
+13. `perf: reduce jump-table and loop-processing overhead`
+14. `perf: overlap transfers and host DP processing`
+15. `perf: improve multi-GPU host scaling`
+16. `docs: publish validated MI300X and MI355X results`
 
 Tests and directly related README updates belong in the same logical commit as
 the behavior they validate or document. Independent test infrastructure or
