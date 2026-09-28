@@ -55,6 +55,7 @@ bool gGenMode; //tames generation mode
 bool gIsOpsLimit;
 bool gVerbose = false; //verbose output (collision errors, etc.)
 u64 gLastWarningTime = 0; //throttle duplicate warning messages (10 sec interval)
+int gStatsCounter = 0; //count ShowStats calls to periodically show per-GPU stats
 
 #pragma pack(push, 1)
 struct DBRec
@@ -117,6 +118,9 @@ void InitGpus()
 		GpuKangs[GpuCnt]->CudaIndex = i;
 		GpuKangs[GpuCnt]->persistingL2CacheMaxSize = deviceProp.persistingL2CacheMaxSize;
 		GpuKangs[GpuCnt]->mpCnt = deviceProp.multiProcessorCount;
+		strncpy(GpuKangs[GpuCnt]->DeviceName, deviceProp.name, 255);
+		GpuKangs[GpuCnt]->DeviceName[255] = '\0';
+		GpuKangs[GpuCnt]->TotalMemBytes = deviceProp.totalGlobalMem;
 
 		// Architecture detection for optimal kernel parameters:
 		// RDNA 3 (gfx1100): cap 11.0, ~6MB L2, Wave32
@@ -318,6 +322,37 @@ void CheckNewPoints()
 	}
 }
 
+void ShowPerGpuStats()
+{
+	if (GpuCnt <= 0)
+		return;
+
+	// Print header
+	printf("\r\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\r\n");
+	printf("GPU Statistics (Updated every ~10 stats intervals)\r\n");
+	printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\r\n");
+
+	// Print per-GPU stats
+	for (int i = 0; i < GpuCnt; i++)
+	{
+		AMDGpuKang::GpuStats stats = GpuKangs[i]->GetStats();
+		printf("GPU %d [%-25s]: %4d Mk/s | Mem: %5llu MB | Device Index: %d",
+			i, stats.name, stats.speedMKps, stats.totalMemMB, stats.gpuIndex);
+
+		// Note: Temperature and power require rocm-smi integration
+		// To enable: rocm-smi --json or similar system call integration
+		// For now, these are unavailable through HIP API
+		if (stats.tempC >= 0)
+			printf(" | Temp: %3d°C", stats.tempC);
+		if (stats.powerW >= 0)
+			printf(" | Power: %4d W", stats.powerW);
+
+		printf("\r\n");
+	}
+
+	printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\r\n\r\n");
+}
+
 void ShowStats(u64 tm_start, double exp_ops, double dp_val)
 {
 #ifdef DEBUG_MODE
@@ -506,6 +541,7 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 	}
 
 	u64 tm_stats = GetTickCount64();
+	gStatsCounter = 0;
 	while (!gSolved)
 	{
 		CheckNewPoints();
@@ -513,6 +549,10 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 		if (GetTickCount64() - tm_stats > 10 * 1000)
 		{
 			ShowStats(tm0, ops, dp_val);
+			gStatsCounter++;
+			// Show per-GPU details every 5 stats displays (~50 seconds)
+			if (gStatsCounter % 5 == 0)
+				ShowPerGpuStats();
 			tm_stats = GetTickCount64();
 		}
 

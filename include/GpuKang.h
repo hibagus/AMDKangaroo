@@ -65,6 +65,8 @@ public:
 	bool IsOldGpu;
 	bool IsCDNA3;  // Mi300X (gfx942) with Wave64
 	bool IsCDNA4;  // Mi355X (gfx950) with Wave64
+	char DeviceName[256]; // GPU name (e.g., "MI300X", "RX 7900 XTX")
+	u64 TotalMemBytes; // Total GPU memory in bytes
 
 	int CalcKangCnt();
 	bool Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJumps1, EcJMP* _EcJumps2, EcJMP* _EcJumps3);
@@ -74,4 +76,13 @@ public:
 	u32 dbg[256];
 
 	int GetStatsSpeed();
+	struct GpuStats {
+		int gpuIndex;
+		char name[256];
+		int speedMKps;
+		u64 totalMemMB;
+		int tempC; // -1 if unavailable
+		int powerW; // -1 if unavailable
+	};
+	GpuStats GetStats();
 };

@@ -690,3 +690,16 @@ int AMDGpuKang::GetStatsSpeed()
 		res += SpeedStats[i];
 	return res / STATS_WND_SIZE;
 }
+
+AMDGpuKang::GpuStats AMDGpuKang::GetStats()
+{
+	GpuStats stats;
+	stats.gpuIndex = CudaIndex;
+	strncpy(stats.name, DeviceName, 255);
+	stats.name[255] = '\0';
+	stats.speedMKps = GetStatsSpeed();
+	stats.totalMemMB = TotalMemBytes / (1024 * 1024);
+	stats.tempC = -1; // Temperature not available via HIP
+	stats.powerW = -1; // Power not available via HIP
+	return stats;
+}
