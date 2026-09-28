@@ -7,6 +7,7 @@
 #pragma once
 
 #include "Ec.h"
+#include "GpuBenchmark.h"
 #include "GpuArch.h"
 
 #define STATS_WND_SIZE	16
@@ -69,6 +70,7 @@ public:
 	bool Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJumps1, EcJMP* _EcJumps2, EcJMP* _EcJumps3);
 	void Stop();
 	void Execute();
+	bool Benchmark(const TGpuBenchmarkConfig& config, TGpuBenchmarkResult& result);
 
 	u32 dbg[256];
 

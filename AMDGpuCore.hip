@@ -6,6 +6,7 @@
 #include <hip/hip_runtime.h>
 
 #include "defs.h"
+#include "GpuBenchmark.h"
 #include "AMDGpuUtils.h"
 
 //imp2 table points for KernelA
@@ -967,6 +968,88 @@ hipError_t CallGpuKernelABForTest(TKparams Kparams, const char*& failedOperation
 	return hipSuccess;
 }
 #endif
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+hipError_t CallGpuKernelABCTimed(TKparams Kparams, hipEvent_t startEvent,
+	hipEvent_t stopEvent, TGpuKernelTimings& timings,
+	const char*& failedOperation)
+{
+	// Synchronize each stop event before reusing the pair. This preserves the
+	// production A -> B -> C order and attributes asynchronous failures to the
+	// kernel that caused them.
+	failedOperation = "record KernelA benchmark start";
+	hipError_t err = hipEventRecord(startEvent);
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "KernelA benchmark launch";
+	KernelA<<<Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelA_LDS_Size>>>(Kparams);
+	err = hipGetLastError();
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "record KernelA benchmark stop";
+	err = hipEventRecord(stopEvent);
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "KernelA benchmark execution";
+	err = hipEventSynchronize(stopEvent);
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "read KernelA benchmark time";
+	err = hipEventElapsedTime(
+		&timings.KernelA_Milliseconds, startEvent, stopEvent);
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = "record KernelB benchmark start";
+	err = hipEventRecord(startEvent);
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "KernelB benchmark launch";
+	KernelB<<<Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelB_LDS_Size>>>(Kparams);
+	err = hipGetLastError();
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "record KernelB benchmark stop";
+	err = hipEventRecord(stopEvent);
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "KernelB benchmark execution";
+	err = hipEventSynchronize(stopEvent);
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "read KernelB benchmark time";
+	err = hipEventElapsedTime(
+		&timings.KernelB_Milliseconds, startEvent, stopEvent);
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = "record KernelC benchmark start";
+	err = hipEventRecord(startEvent);
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "KernelC benchmark launch";
+	KernelC<<<Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelC_LDS_Size>>>(Kparams);
+	err = hipGetLastError();
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "record KernelC benchmark stop";
+	err = hipEventRecord(stopEvent);
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "KernelC benchmark execution";
+	err = hipEventSynchronize(stopEvent);
+	if (err != hipSuccess)
+		return err;
+	failedOperation = "read KernelC benchmark time";
+	err = hipEventElapsedTime(
+		&timings.KernelC_Milliseconds, startEvent, stopEvent);
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = nullptr;
+	return hipSuccess;
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 

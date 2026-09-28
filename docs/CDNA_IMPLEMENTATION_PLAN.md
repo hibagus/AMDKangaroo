@@ -54,13 +54,21 @@ Completed bring-up work:
 - A bounded end-to-end MI355X regression solves the documented 32-bit puzzle
   with the normal 1,000-step production kernels and verifies the exact private
   key. Both new test binaries are compile-validated for MI300X.
+- Deterministic benchmark mode records per-sample and median HIP-event timings
+  for Kernels A/B/C, clearing, transfers, and total iterations in CSV. Results
+  include workload, device, ROCm, profile, rate, and optional pre/post
+  telemetry metadata.
+- A linked-code-object report records VGPR, AGPR, SGPR, spill, scratch, LDS,
+  wave-size, and code-size data for each production kernel on either target.
 
 Remaining issues that must be resolved before performance can be trusted:
 
-- Forced LLVM inlining and unrolling make `KernelA` use 512 VGPRs and 948 bytes
-  of scratch per thread on both targets. Plain `-O3` produces 202 VGPRs with no
-  scratch for the same source.
-- There is no reproducible performance benchmark yet.
+- Final linked code objects show that forced LLVM inlining and unrolling make
+  `KernelA` use 512 VGPRs, 240 VGPR spills, and 964 bytes of scratch per thread
+  on both targets. Plain `-O3` produces 202 VGPRs with no scratch for the same
+  source.
+- Profiler counters and sustained in-kernel power, thermal, and clock telemetry
+  still need to be captured for representative runs on each architecture.
 
 The available development system has ROCm 7.2 and eight MI355X GPUs. `gfx942`
 code generation can be checked locally, but final MI300X performance and runtime
@@ -227,7 +235,7 @@ logical commit:
 5. [x] `test: add deterministic GPU field arithmetic validation`
 6. [x] `fix: repair kernel history indexing and document layouts`
 7. [x] `test: validate kangaroo state and known puzzle solutions`
-8. `benchmark: add reproducible per-kernel performance reporting`
+8. [x] `benchmark: add reproducible per-kernel performance reporting`
 9. `perf: remove spill-inducing compiler overrides`
 10. `perf(gfx942): tune launch geometry and LDS occupancy`
 11. `perf(gfx950): tune launch geometry and LDS occupancy`

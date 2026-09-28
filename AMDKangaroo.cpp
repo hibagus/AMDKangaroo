@@ -4,8 +4,11 @@
 // License: GPLv3, see "LICENSE.TXT" file
 
 
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <string>
 #include <vector>
 
 #include <hip/hip_runtime.h>
@@ -13,6 +16,7 @@
 #include "defs.h"
 #include "utils.h"
 #include "GpuKang.h"
+#include "GpuBenchmarkReport.h"
 
 
 EcJMP EcJumps1[JMP_CNT];
@@ -54,6 +58,10 @@ char gTamesFileName[1024];
 double gMax;
 bool gGenMode; //tames generation mode
 bool gIsOpsLimit;
+bool gKernelBenchmark;
+bool gBenchmarkOptionSeen;
+TGpuBenchmarkConfig gBenchmarkConfig;
+char gBenchmarkOutput[1024];
 
 #pragma pack(push, 1)
 struct DBRec
@@ -77,6 +85,37 @@ bool CheckHipInitialization(hipError_t status, const char* operation, int device
 	else
 		printf("%s failed: %s (HIP error %d)\r\n",
 			operation, hipGetErrorString(status), static_cast<int>(status));
+	return false;
+}
+
+bool ParseUnsigned(const char* text, u32 minimum, u32 maximum, u32& value)
+{
+	errno = 0;
+	char* end = nullptr;
+	const unsigned long parsed = std::strtoul(text, &end, 10);
+	if (errno || end == text || *end != '\0'
+		|| parsed < minimum || parsed > maximum)
+		return false;
+	value = static_cast<u32>(parsed);
+	return true;
+}
+
+bool ParseSeed(const char* text, u64& value)
+{
+	errno = 0;
+	char* end = nullptr;
+	const unsigned long long parsed = std::strtoull(text, &end, 0);
+	if (errno || end == text || *end != '\0' || text[0] == '-')
+		return false;
+	value = static_cast<u64>(parsed);
+	return true;
+}
+
+bool RequireOptionValue(int argumentIndex, int argumentCount, const char* option)
+{
+	if (argumentIndex < argumentCount)
+		return true;
+	printf("error: missed value after %s option\r\n", option);
 	return false;
 }
 } // namespace
@@ -564,6 +603,129 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 	return true;
 }
 
+bool RunKernelBenchmark()
+{
+	if (GpuCnt != 1)
+	{
+		printf("error: reproducible benchmarking requires exactly one selected "
+			"GPU; use -gpu with one device index\r\n");
+		return false;
+	}
+	if (!gRange)
+		gRange = 78;
+	if (!gDP)
+		gDP = 16;
+
+	AMDGpuKang& gpu = *GpuKangs[0];
+	if (!CheckHipInitialization(hipSetDevice(gpu.DeviceIndex),
+			"hipSetDevice for benchmark", gpu.DeviceIndex))
+		return false;
+
+	hipDeviceProp_t properties{};
+	if (!CheckHipInitialization(
+			hipGetDeviceProperties(&properties, gpu.DeviceIndex),
+			"hipGetDeviceProperties for benchmark", gpu.DeviceIndex))
+		return false;
+
+	TGpuBenchmarkMetadata metadata;
+	metadata.TimestampUtc = CurrentUtcTimestamp();
+	metadata.DeviceIndex = gpu.DeviceIndex;
+	metadata.DeviceName = properties.name;
+	metadata.DeviceUuid = FormatGpuUuid(properties.uuid);
+	metadata.Architecture = gpu.Profile->Name;
+	if (!CheckHipInitialization(hipDriverGetVersion(&metadata.DriverVersion),
+			"hipDriverGetVersion for benchmark", gpu.DeviceIndex)
+		|| !CheckHipInitialization(hipRuntimeGetVersion(&metadata.RuntimeVersion),
+			"hipRuntimeGetVersion for benchmark", gpu.DeviceIndex))
+		return false;
+	metadata.WaveSize = properties.warpSize;
+	metadata.SchedulerUnits = properties.multiProcessorCount;
+	metadata.PhysicalComputeUnits =
+		properties.multiProcessorCount * gpu.Profile->ComputeUnitsPerProcessor;
+	metadata.NominalCoreClockKHz = properties.clockRate;
+	metadata.NominalMemoryClockKHz = properties.memoryClockRate;
+	metadata.BlockSize = gpu.Profile->BlockSize;
+	metadata.PointGroupCount = gpu.Profile->PointGroupCount;
+	metadata.Range = gRange;
+	metadata.DistinguishedPointBits = gDP;
+	metadata.StepCount = STEP_CNT;
+
+	std::string telemetryWarning;
+	if (!CollectGpuTelemetry(properties, metadata.Before, telemetryWarning))
+		printf("Benchmark telemetry before run unavailable: %s\r\n",
+			telemetryWarning.c_str());
+
+	// Derive every part of the workload from the recorded seed. Repeating the
+	// command therefore creates the same target point, jump tables, and initial
+	// kangaroo distances.
+	SetRndSeed(gBenchmarkConfig.Seed);
+	EcInt benchmarkPrivateKey;
+	benchmarkPrivateKey.RndBits(gRange);
+	if (benchmarkPrivateKey.IsZero())
+		benchmarkPrivateKey.Set(1);
+	EcPoint pointToSolve = ec.MultiplyG(benchmarkPrivateKey);
+
+	EcInt minimumJump;
+	EcInt randomOffset;
+	minimumJump.Set(1);
+	minimumJump.ShiftLeft(gRange / 2 + 3);
+	for (int index = 0; index < JMP_CNT; index++)
+	{
+		EcJumps1[index].dist = minimumJump;
+		randomOffset.RndMax(minimumJump);
+		EcJumps1[index].dist.Add(randomOffset);
+		EcJumps1[index].dist.data[0] &= 0xFFFFFFFFFFFFFFFE;
+		EcJumps1[index].p = ec.MultiplyG(EcJumps1[index].dist);
+	}
+
+	minimumJump.Set(1);
+	minimumJump.ShiftLeft(gRange - 10);
+	for (int index = 0; index < JMP_CNT; index++)
+	{
+		EcJumps2[index].dist = minimumJump;
+		randomOffset.RndMax(minimumJump);
+		EcJumps2[index].dist.Add(randomOffset);
+		EcJumps2[index].dist.data[0] &= 0xFFFFFFFFFFFFFFFE;
+		EcJumps2[index].p = ec.MultiplyG(EcJumps2[index].dist);
+	}
+
+	minimumJump.Set(1);
+	minimumJump.ShiftLeft(gRange - 12);
+	for (int index = 0; index < JMP_CNT; index++)
+	{
+		EcJumps3[index].dist = minimumJump;
+		randomOffset.RndMax(minimumJump);
+		EcJumps3[index].dist.Add(randomOffset);
+		EcJumps3[index].dist.data[0] &= 0xFFFFFFFFFFFFFFFE;
+		EcJumps3[index].p = ec.MultiplyG(EcJumps3[index].dist);
+	}
+
+	// Start() consumes the shared RNG when it creates initial distances. Reset
+	// it after jump generation so the starting state is independent of later
+	// changes to jump-table construction.
+	SetRndSeed(gBenchmarkConfig.Seed ^ 0x4B414E4741524F4FULL);
+	const bool prepared = gpu.Prepare(pointToSolve, gRange, gDP,
+		EcJumps1, EcJumps2, EcJumps3);
+	// Benchmark() also releases partially allocated state when Prepare() fails,
+	// so always call it before returning an initialization error.
+	TGpuBenchmarkResult result;
+	const bool benchmarked = gpu.Benchmark(gBenchmarkConfig, result);
+	if (!prepared || !benchmarked)
+		return false;
+
+	telemetryWarning.clear();
+	if (!CollectGpuTelemetry(properties, metadata.After, telemetryWarning))
+		printf("Benchmark telemetry after run unavailable: %s\r\n",
+			telemetryWarning.c_str());
+
+	PrintGpuBenchmarkSummary(metadata, gBenchmarkConfig, result);
+	if (!AppendGpuBenchmarkCsv(
+			gBenchmarkOutput, metadata, gBenchmarkConfig, result))
+		return false;
+	printf("Benchmark samples appended to %s\r\n", gBenchmarkOutput);
+	return true;
+}
+
 bool ParseCommandLine(int argc, char* argv[])
 {
 	int ci = 1;
@@ -571,6 +733,63 @@ bool ParseCommandLine(int argc, char* argv[])
 	{
 		char* argument = argv[ci];
 		ci++;
+		if (strcmp(argument, "-benchmark") == 0)
+		{
+			gKernelBenchmark = true;
+		}
+		else
+		if (strcmp(argument, "-bench-warmup") == 0)
+		{
+			gBenchmarkOptionSeen = true;
+			if (!RequireOptionValue(ci, argc, argument)
+				|| !ParseUnsigned(argv[ci], 0, 1000,
+					gBenchmarkConfig.WarmupIterations))
+			{
+				printf("error: invalid value for -bench-warmup option\r\n");
+				return false;
+			}
+			ci++;
+		}
+		else
+		if (strcmp(argument, "-bench-iterations") == 0)
+		{
+			gBenchmarkOptionSeen = true;
+			if (!RequireOptionValue(ci, argc, argument)
+				|| !ParseUnsigned(argv[ci], 1, 1000,
+					gBenchmarkConfig.TimedIterations))
+			{
+				printf("error: invalid value for -bench-iterations option\r\n");
+				return false;
+			}
+			ci++;
+		}
+		else
+		if (strcmp(argument, "-bench-seed") == 0)
+		{
+			gBenchmarkOptionSeen = true;
+			if (!RequireOptionValue(ci, argc, argument)
+				|| !ParseSeed(argv[ci], gBenchmarkConfig.Seed))
+			{
+				printf("error: invalid value for -bench-seed option\r\n");
+				return false;
+			}
+			ci++;
+		}
+		else
+		if (strcmp(argument, "-bench-output") == 0)
+		{
+			gBenchmarkOptionSeen = true;
+			if (!RequireOptionValue(ci, argc, argument)
+				|| !argv[ci][0]
+				|| strlen(argv[ci]) >= sizeof(gBenchmarkOutput))
+			{
+				printf("error: invalid value for -bench-output option\r\n");
+				return false;
+			}
+			strcpy(gBenchmarkOutput, argv[ci]);
+			ci++;
+		}
+		else
 		if (strcmp(argument, "-gpu") == 0)
 		{
 			if (ci >= argc)
@@ -660,6 +879,26 @@ bool ParseCommandLine(int argc, char* argv[])
 			return false;
 		}
 	}
+	if (gBenchmarkOptionSeen && !gKernelBenchmark)
+	{
+		printf("error: -bench-* options require -benchmark\r\n");
+		return false;
+	}
+	if (gKernelBenchmark)
+	{
+		if (!gBenchmarkOutput[0])
+		{
+			printf("error: -benchmark requires -bench-output FILE\r\n");
+			return false;
+		}
+		if (!gPubKey.x.IsZero() || gTamesFileName[0] || gMax > 0.0
+			|| gStartSet)
+		{
+			printf("error: -benchmark cannot be combined with -pubkey, "
+				"-start, -tames, or -max\r\n");
+			return false;
+		}
+	}
 	if (!gPubKey.x.IsZero())
 		if (!gStartSet || !gRange || !gDP)
 		{
@@ -710,6 +949,12 @@ int main(int argc, char* argv[])
 	gMax = 0.0;
 	gGenMode = false;
 	gIsOpsLimit = false;
+	gKernelBenchmark = false;
+	gBenchmarkOptionSeen = false;
+	gBenchmarkConfig.WarmupIterations = 3;
+	gBenchmarkConfig.TimedIterations = 9;
+	gBenchmarkConfig.Seed = 0x5EED950942ULL;
+	gBenchmarkOutput[0] = 0;
 	memset(gGPUs_Mask, 1, sizeof(gGPUs_Mask));
 	if (!ParseCommandLine(argc, argv))
 		return 0;
@@ -720,6 +965,16 @@ int main(int argc, char* argv[])
 	{
 		printf("No supported GPUs detected, exit\r\n");
 		return 0;
+	}
+
+	if (gKernelBenchmark)
+	{
+		printf("\r\nDETERMINISTIC KERNEL BENCHMARK MODE\r\n\r\n");
+		const bool benchmarkSucceeded = RunKernelBenchmark();
+		for (int index = 0; index < GpuCnt; index++)
+			delete GpuKangs[index];
+		DeInitEc();
+		return benchmarkSucceeded ? 0 : 1;
 	}
 
 	pPntList = (u8*)malloc(MAX_CNT_LIST * GPU_DP_SIZE);

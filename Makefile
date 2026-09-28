@@ -57,7 +57,8 @@ HIPCCFLAGS := -O3 $(GPU_ARCH_FLAG) $(GPU_ARCH_CPPFLAG) -fgpu-rdc -D__HIP_PLATFOR
 
 LDFLAGS := -L$(ROCM_PATH)/lib -lamdhip64 -pthread
 
-CPU_SRC := AMDKangaroo.cpp GpuKang.cpp GpuArch.cpp Ec.cpp utils.cpp
+CPU_SRC := AMDKangaroo.cpp GpuKang.cpp GpuArch.cpp GpuBenchmarkReport.cpp \
+           Ec.cpp utils.cpp
 GPU_SRC := AMDGpuCore.hip
 
 # The field test links the production device-arithmetic header into a small,
@@ -98,6 +99,7 @@ all: $(TARGET)
 .PHONY: state-test state-tests-cdna state-test-gfx942 state-test-gfx950
 .PHONY: test-state test-state-gfx942 test-state-gfx950
 .PHONY: test-known-puzzle test-known-puzzle-gfx942 test-known-puzzle-gfx950
+.PHONY: kernel-resources kernel-resources-gfx942 kernel-resources-gfx950
 
 # These convenience targets use recursive Make invocations so each architecture
 # receives its own variables and object directory, including under parallel Make.
@@ -147,6 +149,15 @@ test-known-puzzle: $(TARGET)
 test-known-puzzle-gfx942 test-known-puzzle-gfx950:
 	$(MAKE) GPU_ARCH=$(patsubst test-known-puzzle-%,%,$@) \
 		TARGET=amdkangaroo-$(patsubst test-known-puzzle-%,%,$@) test-known-puzzle
+
+# Print final linked kernel resources as CSV. Unlike compiler remarks, this
+# includes spill counts and code sizes from the executable's code object.
+kernel-resources: $(TARGET)
+	tools/report_kernel_resources.sh ./$(TARGET) $(GPU_ARCH)
+
+kernel-resources-gfx942 kernel-resources-gfx950:
+	$(MAKE) GPU_ARCH=$(patsubst kernel-resources-%,%,$@) \
+		TARGET=amdkangaroo-$(patsubst kernel-resources-%,%,$@) kernel-resources
 
 $(TARGET): $(CPP_OBJECTS) $(HIP_OBJECTS) $(ASM_OBJECTS)
 	$(HIPCC) $(GPU_ARCH_FLAG) -fgpu-rdc $(CCFLAGS) -o $@ $^ $(LDFLAGS)

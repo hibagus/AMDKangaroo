@@ -186,6 +186,52 @@ The default timeout is 60 seconds and can be changed with
 `PUZZLE_TEST_TIMEOUT=<seconds>`. This regression passes on MI355X; the MI300X
 run remains pending hardware access.
 
+### Reproducible Kernel Benchmark
+
+Benchmark mode creates a deterministic workload for one explicitly selected
+GPU, discards warm-up iterations, and reports the median of the timed samples.
+It times KernelA, KernelB, KernelC, device-buffer clearing, result transfers,
+and the complete host-observed iteration separately.
+
+```sh
+./amdkangaroo-gfx950 -benchmark -gpu 0 -range 78 -dp 16 -bench-warmup 3 -bench-iterations 9 -bench-seed 0x5EED950942 -bench-output /tmp/mi355x-baseline.csv
+```
+
+The CSV appends one row per timed sample plus a median row. It records the
+fixed seed and workload, GPU UUID and architecture, ROCm driver/runtime
+versions, launch profile, nominal clocks, and optional pre/post temperature,
+power, and clock samples from `rocm-smi`. Missing telemetry does not invalidate
+the HIP event timings. Pre/post samples provide environmental context; they are
+not in-kernel measurements and can show an idle clock immediately after a run.
+
+`raw_gjumps_s` uses KernelA time because KernelA performs the configured
+`STEP_CNT` jumps. `effective_gjumps_s` uses the complete iteration time and
+therefore includes KernelB, KernelC, clearing, transfers, and host dispatch
+overhead. Compare runs only when the architecture, seed, range, DP setting,
+warm-up count, timed count, and workload constants are identical.
+
+Benchmark-specific options are:
+
+- `-benchmark`: enter deterministic benchmark mode.
+- `-bench-output FILE`: append samples to this required CSV file.
+- `-bench-warmup N`: warm-up iterations, default 3.
+- `-bench-iterations N`: timed iterations, default 9.
+- `-bench-seed N`: decimal or `0x`-prefixed seed, default `0x5EED950942`.
+
+Use the linked-code-object report to capture register, spill, scratch, LDS,
+wave-size, and code-size baselines for every production kernel:
+
+```sh
+make kernel-resources-gfx950
+
+# This compiles and reports gfx942 resources without running on MI300X.
+make kernel-resources-gfx942
+```
+
+The report is CSV on standard output, so it can be redirected to an experiment
+artifact. Resource counts alone are not a performance result; retain the
+benchmark CSV and correctness-test results with every optimization comparison.
+
 ## Usage
 
 ### Basic Command

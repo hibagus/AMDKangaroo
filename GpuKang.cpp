@@ -4,7 +4,10 @@
 // AMD Port: (c) 2025 Sirius437
 
 
+#include <algorithm>
+#include <chrono>
 #include <iostream>
+#include <vector>
 #include <hip/hip_runtime.h>
 
 #include "GpuKang.h"
@@ -51,6 +54,26 @@ void ConfigureLaunchGeometry(TKparams& params, const AMDGpuProfile& profile, int
 	params.BlockCnt = processorCount;
 	params.BlockSize = profile.BlockSize;
 	params.GroupCnt = profile.PointGroupCount;
+}
+
+template <typename Value>
+Value Median(std::vector<Value> values)
+{
+	std::sort(values.begin(), values.end());
+	const size_t middle = values.size() / 2;
+	if (values.size() & 1)
+		return values[middle];
+	return (values[middle - 1] + values[middle]) / static_cast<Value>(2);
+}
+
+template <typename Value, typename Getter>
+Value MedianSample(const std::vector<TGpuBenchmarkSample>& samples, Getter getter)
+{
+	std::vector<Value> values;
+	values.reserve(samples.size());
+	for (const TGpuBenchmarkSample& sample : samples)
+		values.push_back(static_cast<Value>(getter(sample)));
+	return Median(values);
 }
 } // namespace
 
@@ -459,6 +482,190 @@ int AMDGpuKang::Dbg_CheckKangs()
 	return res;
 }
 #endif
+
+bool AMDGpuKang::Benchmark(const TGpuBenchmarkConfig& config,
+	TGpuBenchmarkResult& result)
+{
+	result = {};
+	if (!config.TimedIterations)
+	{
+		printf("GPU %d: benchmark requires at least one timed iteration\r\n",
+			DeviceIndex);
+		return false;
+	}
+
+	if (!Start())
+	{
+		Release();
+		return false;
+	}
+
+	hipEvent_t startEvent = nullptr;
+	hipEvent_t stopEvent = nullptr;
+	bool success = CheckHip(*this, hipEventCreate(&startEvent),
+		"hipEventCreate(benchmark start)");
+	if (success)
+		success = CheckHip(*this, hipEventCreate(&stopEvent),
+			"hipEventCreate(benchmark stop)");
+
+	const u32 totalIterations =
+		config.WarmupIterations + config.TimedIterations;
+	result.JumpsPerIteration = static_cast<u64>(KangCnt) * STEP_CNT;
+	result.Samples.reserve(config.TimedIterations);
+
+	for (u32 iteration = 0; success && iteration < totalIterations; iteration++)
+	{
+		TGpuBenchmarkSample sample{};
+		const auto wallStart = std::chrono::steady_clock::now();
+
+		success = CheckHip(*this, hipEventRecord(startEvent),
+			"hipEventRecord(clear start)");
+		if (success)
+			success = CheckHip(*this, hipMemset(Kparams.DPs_out, 0, 4),
+				"hipMemset(benchmark distinguished-point count)");
+		if (success)
+			success = CheckHip(*this,
+				hipMemset(Kparams.DPTable, 0, KangCnt * sizeof(u32)),
+				"hipMemset(benchmark distinguished-point counters)");
+		if (success)
+			success = CheckHip(*this, hipMemset(Kparams.LoopedKangs, 0, 8),
+				"hipMemset(benchmark looped-kangaroo count)");
+		if (success)
+			success = CheckHip(*this, hipEventRecord(stopEvent),
+				"hipEventRecord(clear stop)");
+		if (success)
+			success = CheckHip(*this, hipEventSynchronize(stopEvent),
+				"hipEventSynchronize(clear)");
+		if (success)
+			success = CheckHip(*this,
+				hipEventElapsedTime(&sample.ClearMilliseconds,
+					startEvent, stopEvent),
+				"hipEventElapsedTime(clear)");
+		if (!success)
+			break;
+
+		const char* failedOperation = nullptr;
+		const hipError_t kernelStatus = CallGpuKernelABCTimed(
+			Kparams, startEvent, stopEvent, sample.Kernels, failedOperation);
+		success = CheckHip(*this, kernelStatus,
+			failedOperation ? failedOperation : "timed kernel sequence");
+		if (!success)
+			break;
+
+		success = CheckHip(*this, hipEventRecord(startEvent),
+			"hipEventRecord(transfer start)");
+		int pointCount = 0;
+		if (success)
+			success = CheckHip(*this,
+				hipMemcpy(&pointCount, Kparams.DPs_out, sizeof(pointCount),
+					hipMemcpyDeviceToHost),
+				"hipMemcpy(benchmark distinguished-point count)");
+		if (pointCount < 0)
+			pointCount = 0;
+		else if (pointCount >= MAX_DP_CNT)
+			pointCount = MAX_DP_CNT;
+		if (success && pointCount)
+			success = CheckHip(*this,
+				hipMemcpy(DPs_out, Kparams.DPs_out + 4,
+					static_cast<size_t>(pointCount) * GPU_DP_SIZE,
+					hipMemcpyDeviceToHost),
+				"hipMemcpy(benchmark distinguished points)");
+		if (success)
+			success = CheckHip(*this,
+				hipMemcpy(dbg, Kparams.dbg_buf, sizeof(dbg),
+					hipMemcpyDeviceToHost),
+				"hipMemcpy(benchmark debug counters)");
+		u32 loopedCount = 0;
+		if (success)
+			success = CheckHip(*this,
+				hipMemcpy(&loopedCount, Kparams.LoopedKangs,
+					sizeof(loopedCount), hipMemcpyDeviceToHost),
+				"hipMemcpy(benchmark looped-kangaroo count)");
+		if (success)
+			success = CheckHip(*this, hipEventRecord(stopEvent),
+				"hipEventRecord(transfer stop)");
+		if (success)
+			success = CheckHip(*this, hipEventSynchronize(stopEvent),
+				"hipEventSynchronize(transfer)");
+		if (success)
+			success = CheckHip(*this,
+				hipEventElapsedTime(&sample.TransferMilliseconds,
+					startEvent, stopEvent),
+				"hipEventElapsedTime(transfer)");
+		if (!success)
+			break;
+
+		const auto wallStop = std::chrono::steady_clock::now();
+		sample.TotalMilliseconds =
+			std::chrono::duration<double, std::milli>(
+				wallStop - wallStart).count();
+		sample.DistinguishedPointCount = static_cast<u32>(pointCount);
+		sample.LoopedKangarooCount = loopedCount;
+
+		if (iteration >= config.WarmupIterations)
+		{
+			result.TimedDurationSeconds += sample.TotalMilliseconds / 1000.0;
+			result.Samples.push_back(sample);
+		}
+	}
+
+	if (stopEvent)
+		success = CheckHip(*this, hipEventDestroy(stopEvent),
+			"hipEventDestroy(benchmark stop)") && success;
+	if (startEvent)
+		success = CheckHip(*this, hipEventDestroy(startEvent),
+			"hipEventDestroy(benchmark start)") && success;
+
+	Release();
+	if (!success || result.Samples.size() != config.TimedIterations)
+		return false;
+
+	// Report medians rather than means so a transient dispatch or host delay
+	// cannot make a weak optimization look better or worse than it is.
+	result.Median.ClearMilliseconds = MedianSample<float>(
+		result.Samples,
+		[](const TGpuBenchmarkSample& value) { return value.ClearMilliseconds; });
+	result.Median.Kernels.KernelA_Milliseconds = MedianSample<float>(
+		result.Samples,
+		[](const TGpuBenchmarkSample& value)
+		{
+			return value.Kernels.KernelA_Milliseconds;
+		});
+	result.Median.Kernels.KernelB_Milliseconds = MedianSample<float>(
+		result.Samples,
+		[](const TGpuBenchmarkSample& value)
+		{
+			return value.Kernels.KernelB_Milliseconds;
+		});
+	result.Median.Kernels.KernelC_Milliseconds = MedianSample<float>(
+		result.Samples,
+		[](const TGpuBenchmarkSample& value)
+		{
+			return value.Kernels.KernelC_Milliseconds;
+		});
+	result.Median.TransferMilliseconds = MedianSample<float>(
+		result.Samples,
+		[](const TGpuBenchmarkSample& value)
+		{
+			return value.TransferMilliseconds;
+		});
+	result.Median.TotalMilliseconds = MedianSample<double>(
+		result.Samples,
+		[](const TGpuBenchmarkSample& value) { return value.TotalMilliseconds; });
+	result.Median.DistinguishedPointCount = MedianSample<u32>(
+		result.Samples,
+		[](const TGpuBenchmarkSample& value)
+		{
+			return value.DistinguishedPointCount;
+		});
+	result.Median.LoopedKangarooCount = MedianSample<u32>(
+		result.Samples,
+		[](const TGpuBenchmarkSample& value)
+		{
+			return value.LoopedKangarooCount;
+		});
+	return true;
+}
 
 //executes in separate thread
 void AMDGpuKang::Execute()
