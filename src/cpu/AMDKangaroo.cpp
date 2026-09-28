@@ -54,6 +54,7 @@ double gMax;
 bool gGenMode; //tames generation mode
 bool gIsOpsLimit;
 bool gVerbose = false; //verbose output (collision errors, etc.)
+u64 gLastWarningTime = 0; //throttle duplicate warning messages (10 sec interval)
 
 #pragma pack(push, 1)
 struct DBRec
@@ -176,7 +177,13 @@ void AddPointsToList(u32* data, int pnt_cnt, u64 ops_cnt)
 	if (PntIndex + pnt_cnt >= MAX_CNT_LIST)
 	{
 		csAddPoints.Leave();
-		printf("DPs buffer overflow, some points lost, increase DP value!\r\n");
+		// Throttle duplicate warnings: only print once every 10 seconds
+		u64 now = GetTickCount64();
+		if (now - gLastWarningTime >= 10000)  // 10 second throttle
+		{
+			printf("⚠️  DPs buffer overflow - points lost, increase -dp value (try -dp 18 or higher)\r\n");
+			gLastWarningTime = now;
+		}
 		return;
 	}
 	memcpy(pPntList + GPU_DP_SIZE * PntIndex, data, pnt_cnt * GPU_DP_SIZE);
@@ -342,8 +349,25 @@ void ShowStats(u64 tm_start, double exp_ops, double dp_val)
 	u64 days = sec / (3600 * 24);
 	int hours = (int)(sec - days * (3600 * 24)) / 3600;
 	int min = (int)(sec - days * (3600 * 24) - hours * 3600) / 60;
-	 
-	printf("%sSpeed: %d MKeys/s, Err: %d, DPs: %lluK/%lluK, Time: %llud:%02dh:%02dm/%llud:%02dh:%02dm\r\n", gGenMode ? "GEN: " : (IsBench ? "BENCH: " : "MAIN: "), speed, gTotalErrors, db.GetBlockCnt()/1000, est_dps_cnt/1000, days, hours, min, exp_days, exp_hours, exp_min);
+
+	// Calculate progress percentage
+	u64 dps_collected = db.GetBlockCnt();
+	u64 dps_expected = est_dps_cnt;
+	int progress = (dps_expected > 0) ? (int)((dps_collected * 100) / dps_expected) : 0;
+	if (progress > 100) progress = 100;
+
+	// Progress bar
+	char bar[21];
+	int filled = progress / 5;
+	for (int i = 0; i < 20; i++)
+		bar[i] = (i < filled) ? '█' : '░';
+	bar[20] = '\0';
+
+	printf("%s[%s] %3d%% | Speed: %d MKeys/s | DPs: %lluK/%lluK | Elapsed: %llud:%02dh:%02dm | ETA: %llud:%02dh:%02dm\r\n",
+		gGenMode ? "GEN " : (IsBench ? "BENCH" : "MAIN"),
+		bar, progress,
+		speed, dps_collected/1000, dps_expected/1000,
+		days, hours, min, exp_days, exp_hours, exp_min);
 }
 
 bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
