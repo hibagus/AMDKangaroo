@@ -39,10 +39,10 @@ endif
 
 # GPU_ARCH selects one code object per binary so CDNA targets can be tuned
 # independently without weakening the existing gfx1100 build.
-# The inherited LLVM overrides are intentionally retained in this build-only
-# change. A later measured change will remove or tune them.
 # -O3: Maximum optimization
 # -fgpu-rdc: Relocatable device code for separate compilation
+# Let the AMD backend choose inlining and unrolling. The inherited forced
+# thresholds spill KernelA state to scratch on both CDNA targets.
 # -Rpass-analysis: Report kernel resource usage when supported by the compiler
 GPU_ARCH_FLAG := --offload-arch=$(GPU_ARCH)
 # Record the code-object target in host code for an early runtime compatibility check.
@@ -50,9 +50,6 @@ GPU_ARCH_CPPFLAG := -DAMDK_TARGET_ARCH=\"$(GPU_ARCH)\"
 CCFLAGS += $(GPU_ARCH_CPPFLAG)
 HIPCCFLAGS := -O3 $(GPU_ARCH_FLAG) $(GPU_ARCH_CPPFLAG) -fgpu-rdc -D__HIP_PLATFORM_AMD__ \
               -ffast-math -munsafe-fp-atomics \
-              -mllvm -amdgpu-early-inline-all=true \
-              -mllvm -unroll-threshold=1000 \
-              -mllvm -inline-threshold=10000 \
               -Rpass-analysis=kernel-resource-usage
 
 LDFLAGS := -L$(ROCM_PATH)/lib -lamdhip64 -pthread

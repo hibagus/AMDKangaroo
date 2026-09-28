@@ -232,6 +232,22 @@ The report is CSV on standard output, so it can be redirected to an experiment
 artifact. Resource counts alone are not a performance result; retain the
 benchmark CSV and correctness-test results with every optimization comparison.
 
+The current ROCm 7.2 CDNA builds let the AMD backend choose inlining and
+unrolling instead of forcing very large LLVM thresholds. For KernelA on both
+`gfx942` and `gfx950`, that change reduced the final linked resources as
+follows:
+
+- VGPRs: 512 to 208
+- VGPR spills: 240 to 0
+- Scratch bytes per thread: 964 to 0
+- Code size: 63,780 to 49,752 bytes
+
+On MI355X, the identical 3-warm-up/9-timed seeded benchmark changed median
+effective throughput from 4.35583 to 4.36201 GJumps/s (about 0.14%). That is
+within normal run-to-run noise, so it is not claimed as a speedup. The change
+removes scratch traffic and creates register headroom for later occupancy and
+launch-geometry tuning without regressing the measured baseline.
+
 ## Usage
 
 ### Basic Command

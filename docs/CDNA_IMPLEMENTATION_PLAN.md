@@ -60,13 +60,15 @@ Completed bring-up work:
   telemetry metadata.
 - A linked-code-object report records VGPR, AGPR, SGPR, spill, scratch, LDS,
   wave-size, and code-size data for each production kernel on either target.
+- Removing forced early-inlining and oversized inline/unroll thresholds reduced
+  KernelA from 512 to 208 VGPRs, 240 to zero VGPR spills, 964 to zero scratch
+  bytes per thread, and 63,780 to 49,752 code bytes on both CDNA targets.
+- The identical MI355X seeded benchmark changed from 4.35583 to 4.36201
+  effective GJumps/s, which is within normal noise. This is recorded as
+  resource headroom for later occupancy tuning, not as a claimed speedup.
 
 Remaining issues that must be resolved before performance can be trusted:
 
-- Final linked code objects show that forced LLVM inlining and unrolling make
-  `KernelA` use 512 VGPRs, 240 VGPR spills, and 964 bytes of scratch per thread
-  on both targets. Plain `-O3` produces 202 VGPRs with no scratch for the same
-  source.
 - Profiler counters and sustained in-kernel power, thermal, and clock telemetry
   still need to be captured for representative runs on each architecture.
 
@@ -236,7 +238,7 @@ logical commit:
 6. [x] `fix: repair kernel history indexing and document layouts`
 7. [x] `test: validate kangaroo state and known puzzle solutions`
 8. [x] `benchmark: add reproducible per-kernel performance reporting`
-9. `perf: remove spill-inducing compiler overrides`
+9. [x] `perf: remove spill-inducing compiler overrides`
 10. `perf(gfx942): tune launch geometry and LDS occupancy`
 11. `perf(gfx950): tune launch geometry and LDS occupancy`
 12. `perf: optimize secp256k1 field arithmetic`
