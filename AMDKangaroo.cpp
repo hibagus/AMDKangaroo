@@ -64,40 +64,59 @@ struct DBRec
 };
 #pragma pack(pop)
 
+namespace
+{
+bool CheckHipInitialization(hipError_t status, const char* operation, int deviceIndex = -1)
+{
+	if (status == hipSuccess)
+		return true;
+
+	if (deviceIndex >= 0)
+		printf("GPU %d: %s failed: %s (HIP error %d)\r\n",
+			deviceIndex, operation, hipGetErrorString(status), static_cast<int>(status));
+	else
+		printf("%s failed: %s (HIP error %d)\r\n",
+			operation, hipGetErrorString(status), static_cast<int>(status));
+	return false;
+}
+} // namespace
+
 void InitGpus()
 {
 	GpuCnt = 0;
 	int gcnt = 0;
-	hipGetDeviceCount(&gcnt);
+	if (!CheckHipInitialization(hipGetDeviceCount(&gcnt), "hipGetDeviceCount"))
+		return;
 	if (gcnt > MAX_GPU_CNT)
 		gcnt = MAX_GPU_CNT;
 
-//	gcnt = 1; //dbg
 	if (!gcnt)
 		return;
 
-	int drv, rt;
-	hipRuntimeGetVersion(&rt);
-	hipDriverGetVersion(&drv);
-	char drvver[100];
-	sprintf(drvver, "%d.%d/%d.%d", drv / 1000, (drv % 100) / 10, rt / 1000, (rt % 100) / 10);
+	int driverVersion = 0;
+	int runtimeVersion = 0;
+	if (!CheckHipInitialization(hipDriverGetVersion(&driverVersion), "hipDriverGetVersion"))
+		return;
+	if (!CheckHipInitialization(hipRuntimeGetVersion(&runtimeVersion), "hipRuntimeGetVersion"))
+		return;
 
-	printf("HIP devices: %d, HIP driver/runtime: %s\r\n", gcnt, drvver);
-	hipError_t hipStatus;
+	// HIP encodes versions as major * 10,000,000 + minor * 100,000 + patch.
+	printf("HIP devices: %d, HIP driver/runtime: %d.%d.%d/%d.%d.%d\r\n", gcnt,
+		driverVersion / 10000000, (driverVersion / 100000) % 100, driverVersion % 100000,
+		runtimeVersion / 10000000, (runtimeVersion / 100000) % 100, runtimeVersion % 100000);
+
 	for (int i = 0; i < gcnt; i++)
 	{
-		hipStatus = hipSetDevice(i);
-		if (hipStatus != hipSuccess)
-		{
-			printf("hipSetDevice for gpu %d failed!\r\n", i);
-			continue;
-		}
-
 		if (!gGPUs_Mask[i])
 			continue;
 
+		if (!CheckHipInitialization(hipSetDevice(i), "hipSetDevice during discovery", i))
+			continue;
+
 		hipDeviceProp_t deviceProp;
-		hipGetDeviceProperties(&deviceProp, i);
+		if (!CheckHipInitialization(
+				hipGetDeviceProperties(&deviceProp, i), "hipGetDeviceProperties", i))
+			continue;
 		const AMDGpuProfile* profile = FindAMDGpuProfile(deviceProp.gcnArchName);
 		if (!profile)
 		{
@@ -139,7 +158,9 @@ void InitGpus()
 			deviceProp.maxSharedMemoryPerMultiProcessor / 1024, deviceProp.pciBusID,
 			deviceProp.l2CacheSize / 1024);
 
-		hipSetDeviceFlags(hipDeviceScheduleBlockingSync);
+		if (!CheckHipInitialization(
+				hipSetDeviceFlags(hipDeviceScheduleBlockingSync), "hipSetDeviceFlags", i))
+			continue;
 
 		GpuKangs[GpuCnt] = new AMDGpuKang();
 		GpuKangs[GpuCnt]->DeviceIndex = i;
@@ -451,10 +472,7 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 //prepare GPUs
 	for (int i = 0; i < GpuCnt; i++)
 		if (!GpuKangs[i]->Prepare(PntToSolve, Range, DP, EcJumps1, EcJumps2, EcJumps3))
-		{
 			GpuKangs[i]->Failed = true;
-			printf("GPU %d Prepare failed\r\n", GpuKangs[i]->DeviceIndex);
-		}
 
 	u64 tm0 = GetTickCount64();
 	printf("GPUs started...\r\n");
@@ -482,6 +500,14 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 	{
 		CheckNewPoints();
 		Sleep(10);
+
+		// A failed worker decrements ThrCnt before exiting. Stop waiting when no
+		// GPU can make further progress, even if no collision was found.
+		if (!ThrCnt)
+		{
+			printf("All GPU workers stopped before a solution was found.\r\n");
+			break;
+		}
 		if (GetTickCount64() - tm_stats > 10 * 1000)
 		{
 			ShowStats(tm0, ops, dp_val);
@@ -521,6 +547,12 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 			else
 				printf("tames saving failed\r\n");
 		}
+		db.Clear();
+		return false;
+	}
+
+	if (!gSolved)
+	{
 		db.Clear();
 		return false;
 	}

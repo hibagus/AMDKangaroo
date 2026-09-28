@@ -35,11 +35,12 @@ Completed bring-up work:
 - Host launch geometry comes from the same 256-thread, 24-group constants used
   to compile the HIP kernels.
 - MI355X completed a bounded kernel-launch smoke test without a HIP launch error.
+- Fatal HIP API and kernel errors report the failed operation, stop the affected
+  worker after its first error, and end the solve cleanly when no workers remain.
 
 Remaining issues that must be resolved before performance can be trusted:
 
 - `KernelB` uses the block index for four per-thread loop-history accesses.
-- Kernel failures are printed repeatedly instead of stopping the failed worker.
 - Forced LLVM inlining and unrolling make `KernelA` use 512 VGPRs and 948 bytes
   of scratch per thread on both targets. Plain `-O3` produces 202 VGPRs with no
   scratch for the same source.
@@ -206,7 +207,7 @@ logical commit:
 
 1. [x] `build: add gfx942 and gfx950 target profiles`
 2. [x] `runtime: detect CDNA devices from HIP architecture properties`
-3. `runtime: fail fast on HIP API and kernel errors`
+3. [x] `runtime: fail fast on HIP API and kernel errors`
 4. `test: add deterministic GPU field arithmetic validation`
 5. `fix: repair kernel history indexing and document layouts`
 6. `test: validate kangaroo state and known puzzle solutions`

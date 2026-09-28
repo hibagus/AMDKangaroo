@@ -895,62 +895,63 @@ __global__ void KernelGen(const TKparams Kparams)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void CallGpuKernelABC(TKparams Kparams)
+hipError_t CallGpuKernelABC(TKparams Kparams, const char*& failedOperation)
 {
-	KernelA <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelA_LDS_Size >>> (Kparams);
+	failedOperation = "KernelA launch";
+	KernelA<<<Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelA_LDS_Size>>>(Kparams);
 	hipError_t err = hipGetLastError();
-	if (err != hipSuccess) {
-		printf("KernelA launch failed: %s\n", hipGetErrorString(err));
-		return;
-	}
-	
-	err = hipDeviceSynchronize();
-	if (err != hipSuccess) {
-		printf("KernelA execution failed: %s\n", hipGetErrorString(err));
-		return;
-	}
-	
-	KernelB <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelB_LDS_Size >>> (Kparams);
-	err = hipGetLastError();
-	if (err != hipSuccess) {
-		printf("KernelB launch failed: %s\n", hipGetErrorString(err));
-		return;
-	}
-	
-	err = hipDeviceSynchronize();
-	if (err != hipSuccess) {
-		printf("KernelB execution failed: %s\n", hipGetErrorString(err));
-		return;
-	}
-	
-	KernelC <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelC_LDS_Size >>> (Kparams);
-	err = hipGetLastError();
-	if (err != hipSuccess) {
-		printf("KernelC launch failed: %s\n", hipGetErrorString(err));
-		return;
-	}
-	
-	err = hipDeviceSynchronize();
-	if (err != hipSuccess) {
-		printf("KernelC execution failed: %s\n", hipGetErrorString(err));
-	}
-}
-
-void CallGpuKernelGen(TKparams Kparams)
-{
-	KernelGen<<<Kparams.BlockCnt, Kparams.BlockSize, 0>>>(Kparams);
-}
-
-hipError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table)
-{
-	// Note: hipFuncSetAttribute may not work the same way as CUDA
-	// For now, we'll skip dynamic shared memory size setting and rely on kernel launch parameters
-	// The shared memory size is specified in the kernel launch itself
-	
-	hipError_t err = hipMemcpyToSymbol(HIP_SYMBOL(jmp2_table), _jmp2_table, JMP_CNT * 64);
-	if (err != hipSuccess) {
-		printf("hipMemcpyToSymbol failed: %s\n", hipGetErrorString(err));
+	if (err != hipSuccess)
 		return err;
-	}
+
+	failedOperation = "KernelA execution";
+	err = hipDeviceSynchronize();
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = "KernelB launch";
+	KernelB<<<Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelB_LDS_Size>>>(Kparams);
+	err = hipGetLastError();
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = "KernelB execution";
+	err = hipDeviceSynchronize();
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = "KernelC launch";
+	KernelC<<<Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelC_LDS_Size>>>(Kparams);
+	err = hipGetLastError();
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = "KernelC execution";
+	err = hipDeviceSynchronize();
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = nullptr;
 	return hipSuccess;
+}
+
+hipError_t CallGpuKernelGen(TKparams Kparams, const char*& failedOperation)
+{
+	failedOperation = "KernelGen launch";
+	KernelGen<<<Kparams.BlockCnt, Kparams.BlockSize, 0>>>(Kparams);
+	hipError_t err = hipGetLastError();
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = "KernelGen execution";
+	err = hipDeviceSynchronize();
+	if (err != hipSuccess)
+		return err;
+
+	failedOperation = nullptr;
+	return hipSuccess;
+}
+
+hipError_t cuSetGpuParams(u64* _jmp2_table)
+{
+	return hipMemcpyToSymbol(HIP_SYMBOL(jmp2_table), _jmp2_table, JMP_CNT * 64);
 }

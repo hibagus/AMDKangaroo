@@ -9,14 +9,43 @@
 
 #include "GpuKang.h"
 
-hipError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table);
-void CallGpuKernelGen(TKparams Kparams);
-void CallGpuKernelABC(TKparams Kparams);
+hipError_t cuSetGpuParams(u64* _jmp2_table);
+hipError_t CallGpuKernelGen(TKparams Kparams, const char*& failedOperation);
+hipError_t CallGpuKernelABC(TKparams Kparams, const char*& failedOperation);
 void AddPointsToList(u32* data, int cnt, u64 ops_cnt);
 extern bool gGenMode; //tames generation mode
+extern u32 gTotalErrors;
 
 namespace
 {
+bool CheckHip(AMDGpuKang& gpu, hipError_t status, const char* operation)
+{
+	if (status == hipSuccess)
+		return true;
+
+	// Record only the first fatal HIP error for a worker. Cleanup calls may also
+	// fail after a device error, but repeating those errors hides the root cause.
+	if (!gpu.Failed)
+	{
+		printf("GPU %d: %s failed: %s (HIP error %d)\r\n",
+			gpu.DeviceIndex, operation, hipGetErrorString(status), static_cast<int>(status));
+		__sync_fetch_and_add(&gTotalErrors, 1U);
+	}
+	gpu.Failed = true;
+	gpu.Stop();
+	return false;
+}
+
+template <typename T>
+void FreeGpuAllocation(AMDGpuKang& gpu, T*& allocation, const char* operation)
+{
+	if (!allocation)
+		return;
+
+	CheckHip(gpu, hipFree(allocation), operation);
+	allocation = nullptr;
+}
+
 void ConfigureLaunchGeometry(TKparams& params, const AMDGpuProfile& profile, int processorCount)
 {
 	params.BlockCnt = processorCount;
@@ -56,6 +85,12 @@ int AMDGpuKang::CalcKangCnt()
 //executes in main thread
 bool AMDGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJumps1, EcJMP* _EcJumps2, EcJMP* _EcJumps3)
 {
+	// Zero every allocation pointer so a partially prepared worker can release
+	// exactly the resources that were acquired before an error.
+	memset(&Kparams, 0, sizeof(Kparams));
+	RndPnts = nullptr;
+	DPs_out = nullptr;
+
 	PntToSolve = _PntToSolve;
 	Range = _Range;
 	DP = _DP;
@@ -71,7 +106,7 @@ bool AMDGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJum
 
 	hipError_t err;
 	err = hipSetDevice(DeviceIndex);
-	if (err != hipSuccess)
+	if (!CheckHip(*this, err, "hipSetDevice during preparation"))
 		return false;
 
 	ConfigureLaunchGeometry(Kparams, *Profile, ProcessorCount);
@@ -92,11 +127,8 @@ bool AMDGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJum
 		int L2size = Kparams.KangCnt * (3 * 32);
 		total_mem += L2size;
 		err = hipMalloc((void**)&Kparams.L2, L2size);
-		if (err != hipSuccess)
-		{
-			printf("GPU %d, Allocate L2 memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+		if (!CheckHip(*this, err, "hipMalloc(L2 workspace)"))
 			return false;
-		}
 		size = L2size;
 		if (size > persistingL2CacheMaxSize)
 			size = persistingL2CacheMaxSize;
@@ -122,106 +154,70 @@ bool AMDGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJum
 	size = MAX_DP_CNT * GPU_DP_SIZE + 16;
 	total_mem += size;
 	err = hipMalloc((void**)&Kparams.DPs_out, size);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate GpuOut memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(DPs_out)"))
 		return false;
-	}
 
 	size = KangCnt * 96;
 	total_mem += size;
 	err = hipMalloc((void**)&Kparams.Kangs, size);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate pKangs memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(Kangs)"))
 		return false;
-	}
 
 	total_mem += JMP_CNT * 96;
 	err = hipMalloc((void**)&Kparams.Jumps1, JMP_CNT * 96);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate Jumps1 memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(Jumps1)"))
 		return false;
-	}
 
 	total_mem += JMP_CNT * 96;
 	err = hipMalloc((void**)&Kparams.Jumps2, JMP_CNT * 96);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate Jumps1 memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(Jumps2)"))
 		return false;
-	}
 
 	total_mem += JMP_CNT * 96;
 	err = hipMalloc((void**)&Kparams.Jumps3, JMP_CNT * 96);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate Jumps3 memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(Jumps3)"))
 		return false;
-	}
 
 	size = 2 * (u64)KangCnt * STEP_CNT;
 	total_mem += size;
 	err = hipMalloc((void**)&Kparams.JumpsList, size);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate JumpsList memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(JumpsList)"))
 		return false;
-	}
 
 	size = (u64)KangCnt * (16 * DPTABLE_MAX_CNT + sizeof(u32)); //we store 16bytes of X
 	total_mem += size;
 	err = hipMalloc((void**)&Kparams.DPTable, size);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate DPTable memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(DPTable)"))
 		return false;
-	}
 
 	size = ProcessorCount * Kparams.BlockSize * sizeof(u64);
 	total_mem += size;
 	err = hipMalloc((void**)&Kparams.L1S2, size);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate L1S2 memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(L1S2)"))
 		return false;
-	}
 
 	size = (u64)KangCnt * MD_LEN * (2 * 32);
 	total_mem += size;
 	err = hipMalloc((void**)&Kparams.LastPnts, size);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate LastPnts memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(LastPnts)"))
 		return false;
-	}
 
 	size = (u64)KangCnt * MD_LEN * sizeof(u64);
 	total_mem += size;
 	err = hipMalloc((void**)&Kparams.LoopTable, size);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate LastPnts memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(LoopTable)"))
 		return false;
-	}
 
 	total_mem += 1024;
 	err = hipMalloc((void**)&Kparams.dbg_buf, 1024);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate dbg_buf memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(dbg_buf)"))
 		return false;
-	}
 
 	size = sizeof(u32) * KangCnt + 8;
 	total_mem += size;
 	err = hipMalloc((void**)&Kparams.LoopedKangs, size);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d Allocate LoopedKangs memory failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMalloc(LoopedKangs)"))
 		return false;
-	}
 
 	DPs_out = (u32*)malloc(MAX_DP_CNT * GPU_DP_SIZE);
 
@@ -234,12 +230,10 @@ bool AMDGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJum
 		memcpy(buf + i * 12 + 8, EcJumps1[i].dist.data, 32);
 	}
 	err = hipMemcpy(Kparams.Jumps1, buf, JMP_CNT * 96, hipMemcpyHostToDevice);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d, hipMemcpy Jumps1 failed: %s\n", DeviceIndex, hipGetErrorString(err));
-		return false;
-	}
 	free(buf);
+	if (!CheckHip(*this, err, "hipMemcpy(Jumps1 to device)"))
+		return false;
+
 //jmp2
 	buf = (u64*)malloc(JMP_CNT * 96);
 	u64* jmp2_table = (u64*)malloc(JMP_CNT * 64);
@@ -252,21 +246,15 @@ bool AMDGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJum
 		memcpy(buf + i * 12 + 8, EcJumps2[i].dist.data, 32);
 	}
 	err = hipMemcpy(Kparams.Jumps2, buf, JMP_CNT * 96, hipMemcpyHostToDevice);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d, hipMemcpy Jumps2 failed: %s\n", DeviceIndex, hipGetErrorString(err));
-		return false;
-	}
 	free(buf);
-
-	err = cuSetGpuParams(Kparams, jmp2_table);
-	if (err != hipSuccess)
-	{
-		free(jmp2_table);
-		printf("GPU %d, cuSetGpuParams failed: %s!\r\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMemcpy(Jumps2 to device)"))
 		return false;
-	}
+
+
+	err = cuSetGpuParams(jmp2_table);
 	free(jmp2_table);
+	if (!CheckHip(*this, err, "hipMemcpyToSymbol(jmp2_table)"))
+		return false;
 //jmp3
 	buf = (u64*)malloc(JMP_CNT * 96);
 	for (int i = 0; i < JMP_CNT; i++)
@@ -276,12 +264,10 @@ bool AMDGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJum
 		memcpy(buf + i * 12 + 8, EcJumps3[i].dist.data, 32);
 	}
 	err = hipMemcpy(Kparams.Jumps3, buf, JMP_CNT * 96, hipMemcpyHostToDevice);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d, hipMemcpy Jumps3 failed: %s\n", DeviceIndex, hipGetErrorString(err));
-		return false;
-	}
 	free(buf);
+	if (!CheckHip(*this, err, "hipMemcpy(Jumps3 to device)"))
+		return false;
+
 
 	printf("GPU %d: allocated %llu MB, %d kangaroos; %s launch: %u blocks x %u threads x %u groups\r\n",
 		DeviceIndex, total_mem / (1024 * 1024), KangCnt, Profile->Name,
@@ -292,21 +278,23 @@ bool AMDGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJum
 void AMDGpuKang::Release()
 {
 	free(RndPnts);
+	RndPnts = nullptr;
 	free(DPs_out);
-	hipFree(Kparams.LoopedKangs);
-	hipFree(Kparams.dbg_buf);
-	hipFree(Kparams.LoopTable);
-	hipFree(Kparams.LastPnts);
-	hipFree(Kparams.L1S2);
-	hipFree(Kparams.DPTable);
-	hipFree(Kparams.JumpsList);
-	hipFree(Kparams.Jumps3);
-	hipFree(Kparams.Jumps2);
-	hipFree(Kparams.Jumps1);
-	hipFree(Kparams.Kangs);
-	hipFree(Kparams.DPs_out);
+	DPs_out = nullptr;
+	FreeGpuAllocation(*this, Kparams.LoopedKangs, "hipFree(LoopedKangs)");
+	FreeGpuAllocation(*this, Kparams.dbg_buf, "hipFree(dbg_buf)");
+	FreeGpuAllocation(*this, Kparams.LoopTable, "hipFree(LoopTable)");
+	FreeGpuAllocation(*this, Kparams.LastPnts, "hipFree(LastPnts)");
+	FreeGpuAllocation(*this, Kparams.L1S2, "hipFree(L1S2)");
+	FreeGpuAllocation(*this, Kparams.DPTable, "hipFree(DPTable)");
+	FreeGpuAllocation(*this, Kparams.JumpsList, "hipFree(JumpsList)");
+	FreeGpuAllocation(*this, Kparams.Jumps3, "hipFree(Jumps3)");
+	FreeGpuAllocation(*this, Kparams.Jumps2, "hipFree(Jumps2)");
+	FreeGpuAllocation(*this, Kparams.Jumps1, "hipFree(Jumps1)");
+	FreeGpuAllocation(*this, Kparams.Kangs, "hipFree(Kangs)");
+	FreeGpuAllocation(*this, Kparams.DPs_out, "hipFree(DPs_out)");
 	if (Profile->UsesL2Workspace)
-		hipFree(Kparams.L2);
+		FreeGpuAllocation(*this, Kparams.L2, "hipFree(L2 workspace)");
 }
 
 void AMDGpuKang::Stop()
@@ -337,7 +325,7 @@ bool AMDGpuKang::Start()
 
 	hipError_t err;
 	err = hipSetDevice(DeviceIndex);
-	if (err != hipSuccess)
+	if (!CheckHip(*this, err, "hipSetDevice during initialization"))
 		return false;
 
 	HalfRange.Set(1);
@@ -408,18 +396,23 @@ bool AMDGpuKang::Start()
 	ConvertAoStoSoA(RndPnts, Kangs_SoA2, KangCnt);
 	err = hipMemcpy(Kparams.Kangs, Kangs_SoA2, KangCnt * 96, hipMemcpyHostToDevice);
 	free(Kangs_SoA2);
-	if (err != hipSuccess)
-	{
-		printf("GPU %d, hipMemcpy failed: %s\n", DeviceIndex, hipGetErrorString(err));
+	if (!CheckHip(*this, err, "hipMemcpy(initial kangaroo state to device)"))
 		return false;
-	}
-	CallGpuKernelGen(Kparams);
+
+	const char* failedOperation = nullptr;
+	err = CallGpuKernelGen(Kparams, failedOperation);
+	if (!CheckHip(*this, err, failedOperation))
+		return false;
 
 	err = hipMemset(Kparams.L1S2, 0, ProcessorCount * Kparams.BlockSize * 8);
-	if (err != hipSuccess)
+	if (!CheckHip(*this, err, "hipMemset(loop flags)"))
 		return false;
-	hipMemset(Kparams.dbg_buf, 0, 1024);
-	hipMemset(Kparams.LoopTable, 0, KangCnt * MD_LEN * sizeof(u64));
+	err = hipMemset(Kparams.dbg_buf, 0, 1024);
+	if (!CheckHip(*this, err, "hipMemset(debug buffer)"))
+		return false;
+	err = hipMemset(Kparams.LoopTable, 0, KangCnt * MD_LEN * sizeof(u64));
+	if (!CheckHip(*this, err, "hipMemset(loop history)"))
+		return false;
 	return true;
 }
 
@@ -429,6 +422,11 @@ int AMDGpuKang::Dbg_CheckKangs()
 	int kang_size = ProcessorCount * Kparams.BlockSize * Kparams.GroupCnt * 96;
 	u64* kangs = (u64*)malloc(kang_size);
 	hipError_t err = hipMemcpy(kangs, Kparams.Kangs, kang_size, hipMemcpyDeviceToHost);
+	if (!CheckHip(*this, err, "hipMemcpy(debug kangaroo state to host)"))
+	{
+		free(kangs);
+		return -1;
+	}
 	int res = 0;
 	for (int i = 0; i < KangCnt; i++)
 	{
@@ -462,38 +460,51 @@ int AMDGpuKang::Dbg_CheckKangs()
 }
 #endif
 
-extern u32 gTotalErrors;
-
 //executes in separate thread
 void AMDGpuKang::Execute()
 {
-	hipSetDevice(DeviceIndex);
+	if (Failed)
+	{
+		// Preparation can fail after some allocations. Select the owning device
+		// before releasing the successfully allocated subset.
+		if (CheckHip(*this, hipSetDevice(DeviceIndex), "hipSetDevice during failed-worker cleanup"))
+			Release();
+		return;
+	}
 
 	if (!Start())
 	{
-		gTotalErrors++;
+		Release();
 		return;
 	}
 #ifdef DEBUG_MODE
 	u64 iter = 1;
 #endif
-	hipError_t err;	
+	hipError_t err;
+	const char* failedOperation = nullptr;
 	while (!StopFlag)
 	{
 		u64 t1 = GetTickCount64();
-		hipMemset(Kparams.DPs_out, 0, 4);
-		hipMemset(Kparams.DPTable, 0, KangCnt * sizeof(u32));
-		hipMemset(Kparams.LoopedKangs, 0, 8);
-		CallGpuKernelABC(Kparams);
-		int cnt;
-		err = hipMemcpy(&cnt, Kparams.DPs_out, 4, hipMemcpyDeviceToHost);
-		if (err != hipSuccess)
-		{
-			printf("GPU %d, CallGpuKernel failed: %s\r\n", DeviceIndex, hipGetErrorString(err));
-			gTotalErrors++;
+
+		err = hipMemset(Kparams.DPs_out, 0, 4);
+		if (!CheckHip(*this, err, "hipMemset(distinguished-point output count)"))
 			break;
-		}
-		
+		err = hipMemset(Kparams.DPTable, 0, KangCnt * sizeof(u32));
+		if (!CheckHip(*this, err, "hipMemset(distinguished-point counters)"))
+			break;
+		err = hipMemset(Kparams.LoopedKangs, 0, 8);
+		if (!CheckHip(*this, err, "hipMemset(looped-kangaroo count)"))
+			break;
+
+		err = CallGpuKernelABC(Kparams, failedOperation);
+		if (!CheckHip(*this, err, failedOperation))
+			break;
+
+		int cnt = 0;
+		err = hipMemcpy(&cnt, Kparams.DPs_out, 4, hipMemcpyDeviceToHost);
+		if (!CheckHip(*this, err, "hipMemcpy(distinguished-point count to host)"))
+			break;
+
 		if (cnt >= MAX_DP_CNT)
 		{
 			cnt = MAX_DP_CNT;
@@ -504,19 +515,19 @@ void AMDGpuKang::Execute()
 		if (cnt)
 		{
 			err = hipMemcpy(DPs_out, Kparams.DPs_out + 4, cnt * GPU_DP_SIZE, hipMemcpyDeviceToHost);
-			if (err != hipSuccess)
-			{
-				gTotalErrors++;
+			if (!CheckHip(*this, err, "hipMemcpy(distinguished points to host)"))
 				break;
-			}
 			AddPointsToList(DPs_out, cnt, (u64)KangCnt * STEP_CNT);
 		}
 
-		//dbg
-		hipMemcpy(dbg, Kparams.dbg_buf, 1024, hipMemcpyDeviceToHost);
+		err = hipMemcpy(dbg, Kparams.dbg_buf, 1024, hipMemcpyDeviceToHost);
+		if (!CheckHip(*this, err, "hipMemcpy(debug counters to host)"))
+			break;
 
-		u32 lcnt;
-		hipMemcpy(&lcnt, Kparams.LoopedKangs, 4, hipMemcpyDeviceToHost);
+		u32 lcnt = 0;
+		err = hipMemcpy(&lcnt, Kparams.LoopedKangs, 4, hipMemcpyDeviceToHost);
+		if (!CheckHip(*this, err, "hipMemcpy(looped-kangaroo count to host)"))
+			break;
 		//printf("GPU %d, Looped: %d\r\n", DeviceIndex, lcnt);
 
 		u64 t2 = GetTickCount64();
@@ -533,10 +544,15 @@ void AMDGpuKang::Execute()
 		if ((iter % 300) == 0)
 		{
 			int corr_cnt = Dbg_CheckKangs();
-			if (corr_cnt)
+			if (corr_cnt < 0)
+				break;
+			if (corr_cnt > 0)
 			{
 				printf("DBG: GPU %d, KANGS CORRUPTED: %d\r\n", DeviceIndex, corr_cnt);
-				gTotalErrors++;
+				__sync_fetch_and_add(&gTotalErrors, 1U);
+				Failed = true;
+				StopFlag = true;
+				break;
 			}
 			else
 				printf("DBG: GPU %d, ALL KANGS OK!\r\n", DeviceIndex);

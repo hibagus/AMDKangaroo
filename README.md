@@ -95,6 +95,9 @@ cannot reuse an incompatible GPU object. At startup, each binary reads HIP's
 `gcnArchName` and accepts only the architecture for which it was compiled.
 Runtime profiles distinguish RDNA WGP reporting from CDNA CU reporting, and
 host launches use the same geometry constants as the compiled kernels.
+Fatal HIP errors identify the device and failed operation, stop the affected
+worker after its first error, and terminate the solve cleanly if no GPU workers
+remain.
 
 End-to-end CDNA correctness and performance validation are still in progress.
 Current status is tracked in the
