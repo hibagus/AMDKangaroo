@@ -53,6 +53,7 @@ char gTamesFileName[1024];
 double gMax;
 bool gGenMode; //tames generation mode
 bool gIsOpsLimit;
+bool gVerbose = false; //verbose output (collision errors, etc.)
 
 #pragma pack(push, 1)
 struct DBRec
@@ -298,7 +299,8 @@ void CheckNewPoints()
 					;// ToLog("W1 and W2 collides in mirror");
 				else
 				{
-					printf("Collision Error\r\n");
+					if (gVerbose)
+						printf("Collision Error\r\n");
 					gTotalErrors++;
 				}
 				continue;
@@ -623,6 +625,11 @@ bool ParseCommandLine(int argc, char* argv[])
 				return false;
 			}
 			gMax = val;
+		}
+		else
+		if (strcmp(argument, "-verbose") == 0)
+		{
+			gVerbose = true;
 		}
 		else
 		{
